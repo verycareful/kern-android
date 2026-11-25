@@ -38,7 +38,7 @@ androidx-material3 = { group = "androidx.compose.material3", name = "material3" 
 androidx-material-icons-extended = { group = "androidx.compose.material", name = "material-icons-extended" }
 androidx-navigation-compose = { group = "androidx.navigation", name = "navigation-compose", version.ref = "navigationCompose" }
 
-# Office formats (pure JVM, no native). PDF is handled separately via the Qyra bridge.
+# Office formats (pure JVM, no native). PDF is handled separately via the kernkraft bridge.
 poi = { group = "org.apache.poi", name = "poi", version.ref = "poi" }
 poi-ooxml = { group = "org.apache.poi", name = "poi-ooxml", version.ref = "poi" }
 opencsv = { group = "com.opencsv", name = "opencsv", version.ref = "opencsv" }

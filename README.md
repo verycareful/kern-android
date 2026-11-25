@@ -26,9 +26,7 @@
 [![elkjs](https://img.shields.io/badge/elkjs-0.12.1-2C5F8A?style=flat-square)](https://github.com/kieler/elkjs)
 [![highlight.js](https://img.shields.io/badge/highlight.js-11.12.0-2F3337?style=flat-square)](https://highlightjs.org/)
 <!-- PDF engine -->
-<!-- Qyra and MuPDF have no shields.io logos. Swap these plain badges for logo badges if logos become available. -->
-[![Qyra](https://img.shields.io/badge/Qyra-JNI%2FNDK%20bridge-DEA584?style=flat-square&logo=rust&logoColor=white)](https://github.com/zParik/Qyra)
-[![MuPDF](https://img.shields.io/badge/MuPDF-PDF%20engine-C0392B?style=flat-square)](https://mupdf.com/)
+[![kernkraft](https://img.shields.io/badge/kernkraft-0.2.0.0-DEA584?style=flat-square&logo=rust&logoColor=white)](https://github.com/verycareful/kernkraft)
 <!-- Project -->
 [![Version](https://img.shields.io/github/v/tag/verycareful/kern-android?style=flat-square&label=version&color=3F5B8B&sort=date)](https://github.com/verycareful/kern-android/tags)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-A42E2B?style=flat-square)](LICENSE)
@@ -68,7 +66,7 @@ shortcode list (MIT) ship inside the app under `assets/preview/`; their licence 
 under EPL-2.0); the licences of everything in that bundle are in
 `licenses/preview/Mermaid-bundle-NOTICES.txt`.
 
-**PDF engine:** MuPDF via the [Qyra](https://github.com/zParik/Qyra) Rust JNI/NDK bridge (GPL-3.0)
+**PDF engine:** [kernkraft](https://github.com/verycareful/kernkraft), a Rust PDF library, through a JNI/NDK bridge (AGPL-3.0)
 - **License:** AGPL-3.0
 - **Min Android API:** 26 (Android 8.0+)
 
@@ -138,6 +136,7 @@ shortcode list (MIT) ship inside the app under `assets/preview/`; their licence 
 under EPL-2.0); the licences of everything in that bundle are in
 `licenses/preview/Mermaid-bundle-NOTICES.txt`.
 
-**PDF engine:** MuPDF via the [Qyra](https://github.com/zParik/Qyra) Rust JNI/NDK
-bridge, licensed GPL-3.0. GPL-3.0 code inside an AGPL-3.0 project is compatible;
-both license headers must be present in the distributed build.
+**PDF engine:** [kernkraft](https://github.com/verycareful/kernkraft) through a Rust JNI/NDK
+bridge, licensed AGPL-3.0 like Kern Android. The data kernkraft bundles and the Rust
+crates it links carry their own licences, listed in `licenses/kernkraft/` and in the
+app's notices.

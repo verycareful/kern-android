@@ -10,7 +10,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import dev.kern.pdfbridge.QyraPdf
+import dev.kern.pdfbridge.KernkraftPdf
 import dev.kern.shared.find.FindMessage
 import dev.kern.shared.find.FindState
 import dev.kern.shared.find.FindTarget
@@ -25,10 +25,9 @@ import kotlinx.coroutines.withContext
 import java.io.File
 
 /**
- * PDF viewer state. 0.1.5.0 part A: open a PDF and page through it (read-only) via
- * the framework [PdfDocument]. The edit toolkit (merge, split, redact, ...) over the
- * Qyra MuPDF bridge lands in later 0.1.5.0 commits, at which point this gains the
- * usual edit/save surface; for now Export just writes a verbatim copy.
+ * PDF viewer state: opens a PDF and pages through it read-only via the framework
+ * [PdfDocument]. The page tools (merge, extract) run through the kernkraft native
+ * engine, [KernkraftPdf]. Export writes a verbatim copy.
  */
 class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
@@ -153,7 +152,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     data class PendingOutput(val cachePath: String, val suggestedName: String)
 
     /** Whether the native PDF engine is bundled in this build. */
-    val engineAvailable: Boolean get() = QyraPdf.available
+    val engineAvailable: Boolean get() = KernkraftPdf.available
 
     fun start(routeArgument: String?) {
         if (started) return
@@ -219,8 +218,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 add(copyToCache(source, dir, "merge_00.pdf"))
                 extraUris.forEachIndexed { i, u -> add(copyToCache(u, dir, "merge_%02d.pdf".format(i + 1))) }
             }
-            val out = File(dir, "merged.pdf")
-            QyraPdf.merge(inputs.map { it.absolutePath }, out.absolutePath) to "merged.pdf"
+            val out = File(dir, uniqueName("merged"))
+            KernkraftPdf.merge(inputs.map { it.absolutePath }, out.absolutePath) to "merged.pdf"
         }
     }
 
@@ -228,22 +227,24 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
      * Extracts a single 1-based page range (e.g. "3-7") from the open PDF into a
      * new file, staged in [pendingOutput].
      *
-     * The bridge also understands comma-separated lists and writes one file per
-     * range, but only one produced file can be staged and saved, so a list is
-     * refused by [rangeSpecError] instead of being silently truncated to its
-     * first range. Ranges are extracted one at a time.
+     * Only one produced file can be staged and saved, so a comma-separated list is
+     * refused by [rangeSpecError] instead of being silently truncated to its first
+     * range. Ranges are extracted one at a time.
      */
     fun extractPages(rangeSpec: String) {
         val source = uri ?: run { toolError = "No open PDF."; return }
         val spec = rangeSpec.filterNot { it.isWhitespace() }
         rangeSpecError(spec)?.let { toolError = it; return }
+        val pages = checkNotNull(pageRange(spec))
+        if (pages.last > pageCount) {
+            toolError = "This PDF has $pageCount ${if (pageCount == 1) "page" else "pages"}."
+            return
+        }
         runTool {
             val dir = toolsCacheDir()
             val input = copyToCache(source, dir, "extract_src.pdf")
-            val result = QyraPdf.splitRanges(input.absolutePath, spec, dir.absolutePath)
-            // splitRanges writes one file per range; spec is a single range, so this
-            // is the one file the user asked for.
-            result to "extract.pdf"
+            val out = File(dir, uniqueName("extract"))
+            KernkraftPdf.extract(input.absolutePath, pages.toList(), out.absolutePath) to "extract.pdf"
         }
     }
 
@@ -269,14 +270,27 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 return "Extract handles one range at a time. Enter a single range like 1-3, " +
                     "then run Extract again for the next one."
             }
-            val match = SINGLE_RANGE.matchEntire(compact)
+            val range = pageRange(compact)
                 ?: return "Use one range like 1-3, or a single page number like 4."
-            val start = match.groupValues[1].toInt()
-            val end = match.groupValues[2].takeIf { it.isNotEmpty() }?.toInt() ?: start
-            if (start < 1) return "Page numbers start at 1."
-            if (end < start) return "The last page of the range cannot come before the first."
+            if (range.first < 1) return "Page numbers start at 1."
+            if (range.last < range.first) return "The last page of the range cannot come before the first."
             return null
         }
+
+        /**
+         * The pages of [spec], a single range such as "4" or "2-7" without whitespace,
+         * or null when it is not shaped like one. A reversed range is empty, so
+         * callers check [rangeSpecError] first.
+         */
+        private fun pageRange(spec: String): IntRange? {
+            val match = SINGLE_RANGE.matchEntire(spec) ?: return null
+            val start = match.groupValues[1].toInt()
+            val end = match.groupValues[2].takeIf { it.isNotEmpty() }?.toInt() ?: start
+            return start..end
+        }
+
+        /** An output name no earlier output of this process shares: outputs never replace a file. */
+        private fun uniqueName(stem: String): String = "${stem}_${System.nanoTime()}.pdf"
     }
 
     /** Writes the staged [pendingOutput] to [target] (a user-picked SAF location). */
@@ -313,8 +327,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     fun consumeToolMessage() { toolMessage = null }
     fun consumeToolError() { toolError = null }
 
-    /** Runs [block] off-main, mapping its [QyraPdf.Result] into [pendingOutput] / [toolMessage]. */
-    private fun runTool(block: suspend () -> Pair<QyraPdf.Result, String>) {
+    /** Runs [block] off-main, mapping its [KernkraftPdf.Result] into [pendingOutput] / [toolMessage]. */
+    private fun runTool(block: suspend () -> Pair<KernkraftPdf.Result, String>) {
         if (toolBusy) return
         toolBusy = true
         val staged = listOfNotNull(pendingOutput?.cachePath)
@@ -323,14 +337,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 // Anything left over from an earlier operation is dead weight.
                 pruneToolsCache(staged)
                 val outcome = runCatching { block() }
-                    .getOrElse { QyraPdf.Result.Failure(it.message ?: "Operation failed") to "" }
+                    .getOrElse { KernkraftPdf.Result.Failure(it.message ?: "Operation failed") to "" }
                 // The copied inputs are only needed for the duration of the native
                 // call, and a failed call leaves nothing worth keeping at all.
-                pruneToolsCache(staged + (outcome.first as? QyraPdf.Result.Success)?.outputPaths.orEmpty())
+                pruneToolsCache(staged + (outcome.first as? KernkraftPdf.Result.Success)?.outputPaths.orEmpty())
                 outcome
             }
             when (result) {
-                is QyraPdf.Result.Success -> {
+                is KernkraftPdf.Result.Success -> {
                     val paths = result.outputPaths
                     // Only one produced file can be staged for saving, so keeping just
                     // the first would discard the rest: say so rather than lose it.
@@ -341,7 +355,7 @@ paths.size > 1 -> toolError =
                         else -> pendingOutput = PendingOutput(paths[0], suggestedName)
                     }
                 }
-                is QyraPdf.Result.Failure -> toolError = result.message
+                is KernkraftPdf.Result.Failure -> toolError = result.message
             }
             toolBusy = false
         }

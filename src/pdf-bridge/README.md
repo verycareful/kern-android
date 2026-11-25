@@ -1,73 +1,57 @@
-# Kern PDF bridge (Qyra native engine)
+# Kern PDF bridge (kernkraft native engine)
 
-Kern's PDF edit tools (merge, split) call PDF operations ported from Qyra through
-a small JNI surface. This directory is the Kotlin side; the Rust side is a
-standalone crate in the Qyra fork at `qyra/kern-bridge/`.
+Kern Android's PDF tools (merge, extract) call kernkraft, the shared Rust PDF
+library of [verycareful/kernkraft](https://github.com/verycareful/kernkraft), through
+JNI. kernkraft is AGPL-3.0, like Kern Android, so the bridge files carry the AGPL-3.0
+header only.
 
-## Boundary
+## The two halves
 
 | Side | File | Symbol |
-|------|------|--------|
-| Kotlin | [QyraPdf.kt](QyraPdf.kt) | `dev.kern.pdfbridge.QyraPdf` |
-| Rust | `qyra/kern-bridge/src/lib.rs` | `Java_dev_kern_pdfbridge_QyraPdf_*` |
+|---|---|---|
+| Kotlin | [KernkraftPdf.kt](KernkraftPdf.kt) | `dev.kern.pdfbridge.KernkraftPdf` |
+| Rust | `crates/kernkraft-jni` in kernkraft | `Java_dev_kern_pdfbridge_KernkraftPdf_*` |
 
-The Kotlin `external` declarations map 1:1 to the Rust exports. Both are
-Android-only. The ops are pure `lopdf` (no MuPDF, no `ndk-context`), so they take
-plain filesystem paths: Kern copies the picked document(s) into its app cache and
-passes absolute paths in; the bridge writes outputs into a cache dir, and Kern
-saves them out via SAF.
+The natives are bound by name. R8 keeps them through the native-methods rule of
+`proguard-android-optimize.txt`, which `build.gradle.kts` uses. Every call is one
+JSON object in and one JSON object out; `crates/kernkraft-pdf-engine/src/` in kernkraft
+holds the request types, and requests with unknown fields are refused.
 
-## Why a separate `kern-bridge` crate (not the main `qyra` crate)
+The native code is the only one in the app: every other format is pure Kotlin/JVM.
+Viewing a PDF needs no native code either, because Android renders PDFs itself.
 
-The full `qyra` crate depends on `mupdf` + `fontconfig`, whose Android
-cross-compile needs an elaborate, Linux-only pipeline (LD wrapper, sysroot stubs,
-`-UHAVE_ANDROID`, bindgen sysroot args - see Qyra's `build-android*.yml`).
-Merge/split need NONE of that: they are pure `lopdf`. So `qyra/kern-bridge/` is a
-tiny cdylib depending only on `lopdf` + `jni`, which builds with a plain
-`cargo ndk`. (The logic is ported from `src-tauri/src/commands/{merge,split}.rs`;
-de-duplicating via a shared `qyra-pdf-core` crate is the clean-PR follow-up.)
+## Building the .so
 
-## Building the .so (in WSL / any Linux)
-
-Produces `libkern_pdf.so`; Kern calls `System.loadLibrary("kern_pdf")`. The file
-is NOT checked in (`jniLibs/` is gitignored) - build it and drop it into Kern's
-`jniLibs/<abi>/`.
-
-One-time setup in WSL (Ubuntu):
+`libkernkraft_jni.so` is not checked in (`jniLibs/` is gitignored). CI builds it with
+`.github/actions/build-pdf-bridge`, from the kernkraft commit pinned in that action's
+`kernkraft-ref` input. To build it locally you need Rust with the Android targets,
+`cargo-ndk` and an Android NDK:
 
 ```
-# Rust + Android targets
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
 rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-android
 cargo install cargo-ndk
-
-# Android NDK (if not already): install via sdkmanager or Android Studio, then
 export ANDROID_NDK_HOME=/path/to/Android/Sdk/ndk/<version>
+
+# from a kernkraft checkout at the commit the action pins
+cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o /path/to/kern-android/jniLibs \
+    build --release -p kernkraft-jni --locked
 ```
 
-Build (from the Qyra fork; adjust the path to where Kern's repo lives in WSL):
+`-o .../jniLibs` writes `jniLibs/<abi>/libkernkraft_jni.so`, the layout Gradle reads
+(`jniLibs.srcDirs` in `build.gradle.kts`, with matching `abiFilters`). The 64-bit
+libraries are aligned to 16 KB pages. When the file is absent,
+`KernkraftPdf.available` is false and the tools sheet says the engine is not bundled.
 
-```
-cd qyra/kern-bridge
-cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o /path/to/kern/jniLibs build --release
-```
+The emulator is x86_64, so a `jniLibs/` with arm64-v8a alone leaves the engine missing
+there. Build just `arm64-v8a` (`-t arm64-v8a`) for a quick phone-only iteration.
 
-`-o .../kern/jniLibs` writes `jniLibs/<abi>/libkern_pdf.so` in the layout Gradle
-expects (Kern's `build.gradle.kts` points `jniLibs.srcDirs` at `jniLibs/` and
-sets matching `abiFilters`). When the file is absent, `QyraPdf.available` is false
-and the tools surface degrades gracefully instead of crashing.
+## Tests
 
-Tip: build just `arm64-v8a` first (`-t arm64-v8a`) - it covers most modern
-phones and is the fastest to iterate on.
+`tests/pdf-bridge/KernkraftPdfTest.kt` covers the answer parsing on the JVM.
+`tests/instrumented/pdf-bridge/KernkraftPdfInstrumentedTest.kt` runs merge and extract
+through the real library on a device or emulator (`connectedDebugAndroidTest`).
 
-## Next ops (mechanical, same pattern)
+## Licence
 
-rotate, reorder, remove pages, metadata - all pure `lopdf`, port from the
-matching `src-tauri/src/commands/*.rs` into `kern-bridge`. The MuPDF render/edit
-ops need `ndk-context` + the `content://` path and come later.
-
-## License
-
-This bridge straddles AGPL-3.0 (Kern) and GPL-3.0 (Qyra); both headers are in
-[QyraPdf.kt](QyraPdf.kt). GPL-3.0 inside AGPL-3.0 is upward-compatible. Changes to
-the Rust boundary must be coordinated with the Qyra maintainers before merging.
+Bridge code is AGPL-3.0 (see the root `LICENSE`). The kernkraft source offer and the
+notices for the data and Rust crates inside the engine are in `licenses/kernkraft/`.

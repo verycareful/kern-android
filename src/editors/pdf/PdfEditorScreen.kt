@@ -98,9 +98,9 @@ private const val A4_PORTRAIT_RATIO = 1.414f
 private val PageVerticalGap = 12.dp
 
 /**
- * PDF viewer (0.1.5.0 part A): paged, pinch-zoomable rendering via the framework
- * [PdfDocument]. Read-only for now; the Qyra-backed edit toolkit lands in later
- * 0.1.5.0 commits. Save is disabled; Export writes a verbatim copy.
+ * PDF viewer: paged, pinch-zoomable rendering via the framework [PdfDocument].
+ * Read-only; the page tools run through the kernkraft engine. Save is disabled;
+ * Export writes a verbatim copy.
  */
 @Composable
 fun PdfEditorScreen(
@@ -138,9 +138,9 @@ fun PdfEditorScreen(
 }
 
 /**
- * Bottom annotation toolbar. Select / Draw / Highlight / Add text are future
- * functional work on the Qyra-backed annotation model and stay disabled; Tools is
- * live and opens the page-tools sheet (merge / extract).
+ * Bottom annotation toolbar. Select / Draw / Highlight / Add text have no engine
+ * behind them yet and stay disabled; Tools is live and opens the page-tools sheet
+ * (merge / extract).
  */
 @Composable
 private fun PdfToolbar(onOpenTools: () -> Unit) {
@@ -257,7 +257,7 @@ private fun PdfPager(
 }
 
 /**
- * Overlay for the PDF edit tools (merge / extract) backed by the Qyra native bridge.
+ * Overlay for the PDF edit tools (merge / extract) backed by the kernkraft native engine.
  * A tool produces a file in the app cache; this layer then prompts the user for a
  * SAF destination to save it out. Lives inside the pager [Box] so it can align its
  * snackbar and busy indicator. The tools sheet open-state is hoisted to the screen
@@ -310,7 +310,7 @@ private fun BoxScope.PdfToolsLayer(
         KernBottomSheet(onDismiss = { onSheetOpenChange(false) }, title = "PDF tools") {
             if (!vm.engineAvailable) {
                 Text(
-                    "Native engine (libkern_pdf.so) is not bundled in this build.",
+                    "Native engine (libkernkraft_jni.so) is not bundled in this build.",
                     style = KernType.caption,
                     color = colors.danger,
                     modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp),

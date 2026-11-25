@@ -224,8 +224,8 @@ internal fun AboutGroup(onShowLicense: () -> Unit, onShowNotices: () -> Unit) {
         SettingsRow(
             icon = KernIcons.Page,
             label = "PDF engine",
-            sublabel = "MuPDF via Qyra, GPL-3.0",
-            onClick = { openUrl(context, QYRA_URL) },
+            sublabel = "kernkraft, AGPL-3.0",
+            onClick = { openUrl(context, KERNKRAFT_URL) },
             trailing = { TrailingIcon(KernIcons.Chevron) },
         )
     }

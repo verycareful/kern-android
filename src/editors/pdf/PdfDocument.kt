@@ -17,9 +17,9 @@ import kotlin.math.roundToInt
 /**
  * Read-only PDF page source backed by the framework [PdfRenderer].
  *
- * Viewing needs ZERO native code: Android renders PDFs itself. The Qyra MuPDF
- * bridge is only needed for the edit toolkit (merge, split, redact, ...), which
- * arrives later in 0.1.5.0. This class is the viewer half.
+ * Viewing needs ZERO native code: Android renders PDFs itself. The kernkraft
+ * engine is only needed for the page tools (merge, extract). This class is the
+ * viewer half.
  *
  * [PdfRenderer] is not thread-safe and only one page may be open at a time, so
  * every render is serialized on [lock]. Always [close] to release the fd.
