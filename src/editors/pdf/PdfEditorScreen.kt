@@ -200,6 +200,7 @@ private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCo
                 vm.startMarkup()
             }
             ActionRow("Draw", KernIcons.Pen, enabled = !vm.editBusy) { expanded = false; vm.startInk() }
+            ActionRow("Add note", KernIcons.Note, enabled = !vm.editBusy) { expanded = false; vm.startNote() }
             ActionRow("Tools", KernIcons.Merge) { expanded = false; onTools() }
             ActionRow("Save compacted copy", KernIcons.Save, enabled = !vm.editBusy) {
                 expanded = false
@@ -273,6 +274,7 @@ private fun PdfPager(
     var containerWidthPx by remember { mutableIntStateOf(0) }
     var goToOpen by remember { mutableStateOf(false) }
     val annotating = vm.annotateMode != PdfEditorViewModel.AnnotateMode.None
+    val selecting = vm.selectedAnnotation != null && !annotating
 
     // An internal link was tapped: show the page it points at.
     LaunchedEffect(vm.linkTargetPage) {
@@ -316,7 +318,7 @@ private fun PdfPager(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = if (annotating) ANNOTATE_BAR_CLEARANCE else 12.dp)
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = if (annotating || selecting) ANNOTATE_BAR_CLEARANCE else 12.dp)
                     .clip(RoundedCornerShape(KernRadius.field))
                     .background(colors.surface)
                     .clickable(onClickLabel = "Go to page") { goToOpen = true }
@@ -344,11 +346,14 @@ private fun PdfPager(
         }
 
         if (annotating) AnnotateBar(vm, Modifier.align(Alignment.BottomCenter))
+        if (selecting) SelectionBar(vm, Modifier.align(Alignment.BottomCenter))
 
         PdfToolsLayer(vm, toolsSheetOpen, onToolsSheetOpenChange)
     }
 
     vm.pendingLink?.let { link -> OpenLinkDialog(link, onDismiss = vm::dismissLink) }
+
+    vm.noteRequest?.let { request -> NoteDialog(request, onCancel = vm::cancelNoteText, onConfirm = vm::commitNoteText) }
 
     if (goToOpen) {
         GoToPageDialog(
@@ -625,6 +630,7 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
     }
 
     val widthDp = with(LocalDensity.current) { (baseWidthPx * zoom).toDp() }
+    val reach = touchReachPx()
     val bmp = bitmap
     if (bmp != null) {
         Box(
@@ -638,10 +644,13 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
             Box(
                 Modifier
                     .width(widthDp)
+                    .then(if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.None) Modifier.carryAnnotation(vm, index, reach) else Modifier)
                     .pointerInput(index, vm.annotateMode) {
                         // Marking and drawing take the touches themselves; a tap on a link is for reading.
                         if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.None) {
-                            detectTapGestures { vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height)) }
+                            detectTapGestures {
+                                vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height), size.height.toFloat() / size.width, reach / size.width)
+                            }
                         }
                     },
             ) {
@@ -657,7 +666,11 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
                     .border(1.dp, colors.borderSoft, RoundedCornerShape(KernRadius.pdfPage)),
             )
             when (vm.annotateMode) {
-                PdfEditorViewModel.AnnotateMode.None -> PdfTextOverlay(lines, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.None -> {
+                    PdfTextOverlay(lines, Modifier.matchParentSize())
+                    SelectionOutline(vm, index, Modifier.matchParentSize())
+                }
+                PdfEditorViewModel.AnnotateMode.Note -> NoteTapLayer(vm, index, Modifier.matchParentSize())
                 PdfEditorViewModel.AnnotateMode.Markup -> MarkupLayer(vm, index, lines, Modifier.matchParentSize())
                 PdfEditorViewModel.AnnotateMode.Ink -> InkLayer(vm, index, Modifier.matchParentSize())
             }

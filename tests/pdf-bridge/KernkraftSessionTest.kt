@@ -173,4 +173,92 @@ class KernkraftSessionTest {
         assertEquals("[[[0.1,0.2],[0.3,0.4]],[[0.5,0.5]]]", json.getJSONArray("strokes").toString())
         assertEquals(3.0, json.getDouble("width"), 0.0)
     }
+
+    @Test
+    fun annotations_are_read_with_their_names_kinds_and_geometry() {
+        val list = KernkraftSession.parseAnnotations(
+            JSONObject(
+                """{"ok":true,"annotations":[
+                  {"id":{"object":12,"generation":0},"kind":"Note","subtype":null,"drawn_by_library":true,
+                   "rect":[0.1,0.2,0.15,0.25],"quads":[],"strokes":[],"contents":"Check this","author":null,
+                   "colour":[1.0,0.92,0.0],"opacity":1.0,"line_width":null,"flags":28},
+                  {"id":{"object":13,"generation":2},"kind":"Ink","subtype":null,"drawn_by_library":true,
+                   "rect":[0.1,0.1,0.5,0.3],"quads":[],"strokes":[[[0.1,0.1],[0.5,0.3]],[[0.2,0.2]]],"contents":null,
+                   "author":null,"colour":[0,0,0],"opacity":1.0,"line_width":2.0,"flags":4},
+                  {"id":null,"kind":"Other","subtype":"Stamp","drawn_by_library":false,
+                   "rect":[0.6,0.6,0.9,0.7],"quads":[],"strokes":[],"contents":null,"author":null,
+                   "colour":null,"opacity":1.0,"line_width":null,"flags":4},
+                  {"id":{"object":14,"generation":0},"kind":"Highlight","subtype":null,"drawn_by_library":true,
+                   "rect":[0.1,0.5,0.6,0.55],"quads":[[0.1,0.5,0.3,0.55],[0.35,0.5,0.6,0.55]],"strokes":[],"contents":null,
+                   "author":null,"colour":[1.0,0.92,0.0],"opacity":1.0,"line_width":null,"flags":4}]}""",
+            ),
+        )
+        assertEquals(4, list.size)
+        val note = list[0]
+        assertEquals(PdfAnnotationId(12, 0), note.id)
+        assertEquals(PdfAnnotationKind.Note, note.kind)
+        assertEquals("Check this", note.contents)
+        assertEquals(PdfBox(0.1f, 0.2f, 0.15f, 0.25f), note.rect)
+        assertEquals(PdfColour(1.0, 0.92, 0.0), note.colour)
+        assertEquals(28L, note.flags)
+        val ink = list[1]
+        assertEquals(PdfAnnotationId(13, 2), ink.id)
+        assertEquals(listOf(listOf(PdfPoint(0.1, 0.1), PdfPoint(0.5, 0.3)), listOf(PdfPoint(0.2, 0.2))), ink.strokes)
+        assertEquals(null, ink.contents)
+        val stamp = list[2]
+        assertEquals(null, stamp.id)
+        assertEquals(PdfAnnotationKind.Other("Stamp"), stamp.kind)
+        assertFalse(stamp.drawnByLibrary)
+        assertEquals(null, stamp.colour)
+        assertEquals(2, list[3].quads.size)
+    }
+
+    @Test
+    fun a_step_names_the_annotation_it_added() {
+        val step = KernkraftSession.parseStep(
+            JSONObject(
+                """{"ok":true,"revision":1,"pages":1,"changed_pages":[1],"can_undo":true,"can_redo":false,"modified":true,
+                   "annotation":{"object":21,"generation":0}}""",
+            ),
+        )
+        assertEquals(PdfAnnotationId(21, 0), step.annotation)
+        val none = KernkraftSession.parseStep(
+            JSONObject("""{"ok":true,"revision":1,"pages":1,"changed_pages":[],"can_undo":true,"can_redo":false,"modified":true}"""),
+        )
+        assertEquals(null, none.annotation)
+    }
+
+    @Test
+    fun a_note_is_sent_with_its_place_text_and_page_from_one() {
+        val json = PdfOp.AddNote(1, PdfPoint(0.25, 0.5), "Check this", PdfColour(1.0, 0.92, 0.0), "D:20261126120000Z").toJson()
+        assertEquals("addNote", json.getString("op"))
+        assertEquals(2, json.getInt("page"))
+        assertEquals("[0.25,0.5]", json.getJSONArray("at").toString())
+        assertEquals("Check this", json.getString("text"))
+    }
+
+    @Test
+    fun an_edit_of_an_annotation_sends_only_what_it_changes() {
+        val id = PdfAnnotationId(12, 3)
+        val colour = PdfOp.EditAnnotation(0, id, "D:20261126120000Z", colour = PdfColour(1.0, 0.0, 0.0)).toJson()
+        assertEquals("editAnnotation", colour.getString("op"))
+        assertEquals(1, colour.getInt("page"))
+        assertEquals(12, colour.getJSONObject("id").getInt("object"))
+        assertEquals(3, colour.getJSONObject("id").getInt("generation"))
+        assertTrue(colour.has("colour"))
+        assertFalse(colour.has("contents") || colour.has("translate"))
+        val move = PdfOp.EditAnnotation(0, id, "D:20261126120000Z", translate = PdfPoint(-0.1, 0.2)).toJson()
+        assertEquals("[-0.1,0.2]", move.getJSONArray("translate").toString())
+        assertFalse(move.has("colour") || move.has("contents"))
+        val text = PdfOp.EditAnnotation(0, id, "D:20261126120000Z", contents = "New").toJson()
+        assertEquals("New", text.getString("contents"))
+    }
+
+    @Test
+    fun a_deletion_names_the_annotation_and_the_page_from_one() {
+        val json = PdfOp.DeleteAnnotation(2, PdfAnnotationId(9, 0)).toJson()
+        assertEquals("deleteAnnotation", json.getString("op"))
+        assertEquals(3, json.getInt("page"))
+        assertEquals(9, json.getJSONObject("id").getInt("object"))
+    }
 }

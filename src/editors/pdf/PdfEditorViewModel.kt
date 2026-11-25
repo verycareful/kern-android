@@ -13,6 +13,8 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.kern.pdfbridge.KernkraftPdf
 import dev.kern.pdfbridge.MarkupKind
+import dev.kern.pdfbridge.PdfAnnotation
+import dev.kern.pdfbridge.PdfAnnotationId
 import dev.kern.pdfbridge.PdfBox
 import dev.kern.pdfbridge.PdfColour
 import dev.kern.pdfbridge.PdfDate
@@ -111,6 +113,156 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         return lines
     }
 
+    // Annotations
+
+    private val annotationCache = HashMap<Int, List<PdfAnnotation>>()
+
+    /** What the engine reads of the annotations of [page], in drawing order; empty where it cannot read them. */
+    suspend fun annotationsOf(page: Int): List<PdfAnnotation> {
+        val revision = textRevision
+        annotationCache[page]?.let { return it }
+        val open = session ?: return emptyList()
+        val read = try {
+            withContext(sessionDispatcher) { open.annotations(page) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        if (textRevision == revision) annotationCache[page] = read
+        return read
+    }
+
+    /** The annotation the last tap chose, with its outline drawn and what can be done to it offered. */
+    var selectedAnnotation by mutableStateOf<SelectedAnnotation?>(null)
+        private set
+
+    /** How far, as fractions of the page, a finger has carried the selected annotation since it touched it. */
+    var carriedOffset by mutableStateOf(PagePoint(0f, 0f))
+        private set
+
+    fun carry(by: PagePoint) { carriedOffset = by }
+
+    private fun select(chosen: SelectedAnnotation?) {
+        selectedAnnotation = chosen
+        forgetCarry()
+    }
+
+    private fun forgetCarry() {
+        carriedOffset = PagePoint(0f, 0f)
+    }
+
+    fun deselect() = select(null)
+
+    /** After the edit now running or waiting: the annotation to select, read again from the document. */
+    private data class Reselect(val page: Int, val id: PdfAnnotationId?)
+
+    private var reselect: Reselect? = null
+
+    /** Asks for [op], and for the annotation of [reselect] to be selected once it is in; nothing is kept when the request is not taken. */
+    private fun requestEdit(op: PdfOp, reselect: Reselect?) {
+        this.reselect = reselect
+        if (!requestEdit(op)) {
+            this.reselect = null
+            forgetCarry()
+        }
+    }
+
+    /** Asks for the edit [edit] makes of the selected annotation, when [allowed] says the engine can do it. */
+    private fun withSelected(allowed: (AnnotationActions) -> Boolean, edit: (page: Int, id: PdfAnnotationId) -> PdfOp) {
+        val chosen = selectedAnnotation ?: return
+        val id = chosen.annotation.id ?: return
+        if (!allowed(AnnotationSelectionModel.actionsOf(chosen.annotation))) return
+        requestEdit(edit(chosen.page, id), Reselect(chosen.page, id))
+    }
+
+    fun recolourSelected(colour: MarkColour) =
+        withSelected({ it.recolour }) { page, id -> PdfOp.EditAnnotation(page, id, PdfDate.now(), colour = colour.toEngine()) }
+
+    /** Moves the selected annotation by [by], fractions of the page; the move is kept on the page. */
+    fun moveSelected(by: PagePoint) {
+        val box = selectedAnnotation?.annotation?.rect ?: return
+        val clamped = AnnotationSelectionModel.clampMove(box, by.x, by.y)
+        if (!AnnotationSelectionModel.isMove(clamped)) { forgetCarry(); return }
+        withSelected({ it.move }) { page, id ->
+            PdfOp.EditAnnotation(page, id, PdfDate.now(), translate = PdfPoint(clamped.x.toDouble(), clamped.y.toDouble()))
+        }
+    }
+
+    fun deleteSelected() {
+        val chosen = selectedAnnotation ?: return
+        val id = chosen.annotation.id ?: return
+        if (!AnnotationSelectionModel.actionsOf(chosen.annotation).delete) return
+        requestEdit(PdfOp.DeleteAnnotation(chosen.page, id), reselect = null)
+    }
+
+    /** The text of a note being written, or of one being changed; the screen shows a dialog while it is set. */
+    sealed interface NoteRequest {
+        val initial: String
+
+        data class New(val page: Int, val at: PagePoint) : NoteRequest {
+            override val initial: String get() = ""
+        }
+
+        data class Change(val page: Int, val id: PdfAnnotationId, override val initial: String) : NoteRequest
+    }
+
+    var noteRequest by mutableStateOf<NoteRequest?>(null)
+        private set
+
+    fun editSelectedNoteText() {
+        val chosen = selectedAnnotation ?: return
+        val id = chosen.annotation.id ?: return
+        if (!AnnotationSelectionModel.actionsOf(chosen.annotation).editText) return
+        noteRequest = NoteRequest.Change(chosen.page, id, chosen.annotation.contents.orEmpty())
+    }
+
+    fun cancelNoteText() { noteRequest = null }
+
+    /** Puts [text] into the note the dialog is about: a new note at the tapped place, or the chosen note's text. */
+    fun commitNoteText(text: String) {
+        val request = noteRequest ?: return
+        noteRequest = null
+        if (text.isBlank()) return
+        when (request) {
+            is NoteRequest.New -> requestEdit(
+                PdfOp.AddNote(
+                    page = request.page,
+                    at = PdfPoint(request.at.x.toDouble(), request.at.y.toDouble()),
+                    text = text,
+                    colour = noteColour.toEngine(),
+                    modified = PdfDate.now(),
+                ),
+                Reselect(request.page, null),
+            )
+            is NoteRequest.Change -> requestEdit(
+                PdfOp.EditAnnotation(request.page, request.id, PdfDate.now(), contents = text),
+                Reselect(request.page, request.id),
+            )
+        }
+    }
+
+    /** A tap at [point] on [page] while adding a note: asks what the note says. */
+    fun placeNote(page: Int, point: PagePoint) {
+        if (editBusy) return
+        val at = PagePoint(point.x.coerceIn(0f, NOTE_PLACEMENT_LIMIT), point.y.coerceIn(0f, NOTE_PLACEMENT_LIMIT))
+        noteRequest = NoteRequest.New(page, at)
+    }
+
+    /** The edit that just went in is in the document: select what it was about, read again, or nothing. */
+    private fun reselectAfter(step: PdfStep) {
+        val wanted = reselect
+        reselect = null
+        if (wanted == null) { deselect(); return }
+        // A note that was just added is shown chosen, with its bar: the mode that placed it is left.
+        if (wanted.id == null) annotateMode = AnnotateMode.None
+        val id = wanted.id ?: step.annotation
+        viewModelScope.launch {
+            val found = id?.let { annotationsOf(wanted.page).firstOrNull { a -> a.id == it } }
+            select(found?.let { SelectedAnnotation(wanted.page, it) })
+        }
+    }
+
     // Links
 
     /** A web, mail or phone link the user tapped, waiting for them to confirm opening it. */
@@ -124,14 +276,22 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     private val linkCache = HashMap<Int, List<PdfLink>>()
 
     /**
-     * Handles a tap at [point] on [page]: follows a link there, if there is one.
+     * Handles a tap at [point] on [page] (whose height over width is [pageAspect]): selects the
+     * annotation there, if there is one; otherwise drops the selection and follows a link there, if
+     * there is one. [slop] is how far, in page widths, a touch may miss a thin annotation.
      * A link out of the document is only offered, never opened, until the user confirms.
      */
-    fun tapPage(page: Int, point: PagePoint) {
+    fun tapPage(page: Int, point: PagePoint, pageAspect: Float, slop: Float) {
         val layer = textLayer
         if (layer == null) return
         val revision = textRevision
         viewModelScope.launch {
+            val touched = AnnotationSelectionModel.hit(annotationsOf(page), point, pageAspect, slop)
+            if (touched != null) {
+                select(SelectedAnnotation(page, touched))
+                return@launch
+            }
+            deselect()
             val links = linkCache[page] ?: try {
                 layer.links(page)
             } catch (e: CancellationException) {
@@ -255,20 +415,25 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         textFailure = null
     }
 
-    /** Asks for [op] to be applied. The first edit of an open PDF waits for the warning. */
-    fun requestEdit(op: PdfOp) {
-        if (editBusy || loading || error != null) return
+    /**
+     * Asks for [op] to be applied. The first edit of an open PDF waits for the warning. Gives whether
+     * the request was taken: it is not while another edit runs, while the document is not open, or
+     * when there is no engine.
+     */
+    fun requestEdit(op: PdfOp): Boolean {
+        if (editBusy || loading || error != null) return false
         if (!KernkraftPdf.available) {
             toolError = "The PDF engine is not bundled in this build, so this PDF cannot be edited."
-            return
+            return false
         }
         handle(gate.request(op))
+        return true
     }
 
     // --- Markup and ink -------------------------------------------------------------
 
     /** What a touch on a page does: scroll and select as usual, mark text, or draw. */
-    enum class AnnotateMode { None, Markup, Ink }
+    enum class AnnotateMode { None, Markup, Ink, Note }
 
     var annotateMode by mutableStateOf(AnnotateMode.None)
         private set
@@ -282,7 +447,16 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         private set
 
     /** The colour the bar shows as chosen: the pen's while drawing, the marker's otherwise. */
-    val activeColour: MarkColour get() = if (annotateMode == AnnotateMode.Ink) inkColour else markColour
+    val activeColour: MarkColour
+        get() = when (annotateMode) {
+            AnnotateMode.Ink -> inkColour
+            AnnotateMode.Note -> noteColour
+            else -> markColour
+        }
+
+    /** The colour a new note is made in. */
+    var noteColour by mutableStateOf(MarkColour.Yellow)
+        private set
     var inkWidth by mutableStateOf(InkWidth.Medium)
         private set
 
@@ -294,17 +468,24 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     fun startInk() = enter(AnnotateMode.Ink)
 
+    fun startNote() = enter(AnnotateMode.Note)
+
     fun finishAnnotating() = enter(AnnotateMode.None)
 
     private fun enter(mode: AnnotateMode) {
         annotateMode = mode
         markupSelection = null
+        deselect()
     }
 
     fun chooseMarkupKind(kind: MarkupKind) { markupKind = kind }
 
     fun chooseColour(colour: MarkColour) {
-        if (annotateMode == AnnotateMode.Ink) inkColour = colour else markColour = colour
+        when (annotateMode) {
+            AnnotateMode.Ink -> inkColour = colour
+            AnnotateMode.Note -> noteColour = colour
+            else -> markColour = colour
+        }
     }
 
     fun chooseInkWidth(width: InkWidth) { inkWidth = width }
@@ -403,6 +584,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     fun cancelEdit() {
         gate.cancel()
         dropPendingInk()
+        reselect = null
+        forgetCarry()
     }
 
     /** The save picker answered for the untouched copy: [target] is where it goes, or null when it was closed. */
@@ -499,6 +682,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         markupSelection = null
         inkAdopted()
         textRevision++
+        annotationCache.keys.retainAll { it !in step.changedPages }
+        if (countChanged) annotationCache.clear()
         publishText()
         dirty = step.modified
         canUndo = step.canUndo
@@ -515,11 +700,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 pageVersions[page] = pageVersion(page) + 1
             }
         }
+        reselectAfter(step)
     }
 
     /** An edit failed: say why, and put the last good picture back if the failure took it away. */
     private suspend fun editFailed(failure: Throwable) {
         dropPendingInk()
+        reselect = null
+        deselect()
         toolError = when {
             failure is PdfEngineException && failure.needsCompactedCopy ->
                 "This PDF had to be repaired to be read, so Kern cannot edit it in place. ${failure.message}"
@@ -757,6 +945,9 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     companion object {
         /** How long a page waits for the document an edit is swapping in. */
+        /** A note's icon is placed no nearer the page's right and bottom edges than this, so it stays on the page. */
+        private const val NOTE_PLACEMENT_LIMIT = 0.95f
+
         private const val RENDER_WAIT_MS = 5_000L
         private const val RENDER_RETRY_MS = 20L
 

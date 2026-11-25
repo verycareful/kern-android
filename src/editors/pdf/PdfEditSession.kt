@@ -2,6 +2,7 @@ package dev.kern.editors.pdf
 
 import android.graphics.Bitmap
 import dev.kern.pdfbridge.KernkraftSession
+import dev.kern.pdfbridge.PdfAnnotation
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfStep
 import kotlinx.coroutines.CoroutineDispatcher
@@ -79,6 +80,9 @@ class PdfEditSession private constructor(
 
     /** The text of the document as it stands, read through the engine; its calls run on [dispatcher]. */
     fun textLayer(dispatcher: CoroutineDispatcher): PdfTextLayer = KernkraftTextLayer(engine, dispatcher)
+
+    /** The annotations of [page] (0-based) of the document as it stands. */
+    fun annotations(page: Int): List<PdfAnnotation> = engine.annotations(page)
 
     /** [page] (0-based) of the document as it stands, [widthPx] wide, drawn by the engine with its annotations. */
     fun render(page: Int, widthPx: Int): Bitmap = engine.render(page, widthPx)

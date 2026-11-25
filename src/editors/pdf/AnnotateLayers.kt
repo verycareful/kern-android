@@ -67,12 +67,12 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (marking) {
-                for (kind in MarkupKind.entries) {
+            when (vm.annotateMode) {
+                PdfEditorViewModel.AnnotateMode.Markup -> for (kind in MarkupKind.entries) {
                     BarChip(kindLabel(kind), vm.markupKind == kind) { vm.chooseMarkupKind(kind) }
                 }
-            } else {
-                for (width in InkWidth.entries) {
+                PdfEditorViewModel.AnnotateMode.Note -> Text("Tap the page where the note goes", style = KernType.meta, color = colors.textMid)
+                else -> for (width in InkWidth.entries) {
                     BarChip(width.label, vm.inkWidth == width) { vm.chooseInkWidth(width) }
                 }
             }
@@ -83,18 +83,7 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
             horizontalArrangement = Arrangement.spacedBy(10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            for (colour in MarkColour.entries) {
-                val chosen = vm.activeColour == colour
-                Box(
-                    Modifier
-                        .size(28.dp)
-                        .clip(CircleShape)
-                        .background(Color(colour.red.toFloat(), colour.green.toFloat(), colour.blue.toFloat()))
-                        .border(if (chosen) 3.dp else 1.dp, if (chosen) colors.accent else colors.borderSoft, CircleShape)
-                        .semantics { contentDescription = "${colour.label}${if (chosen) ", chosen" else ""}" }
-                        .clickable { vm.chooseColour(colour) },
-                )
-            }
+            ColourDots(vm.activeColour, vm::chooseColour)
             if (marking) {
                 val selected = vm.markupSelection != null
                 BarChip(
@@ -108,6 +97,24 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
     }
 }
 
+/** The colours on offer as round swatches; [chosen] is ringed, and null when the colour is none of them. */
+@Composable
+internal fun ColourDots(chosen: MarkColour?, onChoose: (MarkColour) -> Unit) {
+    val colors = KernTheme.colors
+    for (colour in MarkColour.entries) {
+        val isChosen = chosen == colour
+        Box(
+            Modifier
+                .size(28.dp)
+                .clip(CircleShape)
+                .background(Color(colour.red.toFloat(), colour.green.toFloat(), colour.blue.toFloat()))
+                .border(if (isChosen) 3.dp else 1.dp, if (isChosen) colors.accent else colors.borderSoft, CircleShape)
+                .semantics { contentDescription = "${colour.label}${if (isChosen) ", chosen" else ""}" }
+                .clickable { onChoose(colour) },
+        )
+    }
+}
+
 private fun kindLabel(kind: MarkupKind) = when (kind) {
     MarkupKind.Highlight -> "Highlight"
     MarkupKind.Underline -> "Underline"
@@ -115,7 +122,7 @@ private fun kindLabel(kind: MarkupKind) = when (kind) {
 }
 
 @Composable
-private fun BarChip(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
+internal fun BarChip(label: String, selected: Boolean, enabled: Boolean = true, onClick: () -> Unit) {
     val colors = KernTheme.colors
     val shape = RoundedCornerShape(KernRadius.innerSmall)
     Text(

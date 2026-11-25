@@ -30,6 +30,43 @@ data class PdfStep(
     val canUndo: Boolean,
     val canRedo: Boolean,
     val modified: Boolean,
+    /** The annotation the step added, when it added one. */
+    val annotation: PdfAnnotationId? = null,
+)
+
+/** The name the engine gives an annotation: its object and generation. Operations name an annotation by it. */
+data class PdfAnnotationId(val objectNumber: Long, val generation: Int) {
+    internal fun toJson(): JSONObject = JSONObject().put("object", objectNumber).put("generation", generation)
+}
+
+/** What an annotation is. [Other] is any other PDF subtype, by [Other.subtype]. */
+sealed interface PdfAnnotationKind {
+    data object Highlight : PdfAnnotationKind
+    data object Underline : PdfAnnotationKind
+    data object StrikeOut : PdfAnnotationKind
+    data object Ink : PdfAnnotationKind
+
+    /** A note, shown as an icon. */
+    data object Note : PdfAnnotationKind
+    data class Other(val subtype: String) : PdfAnnotationKind
+}
+
+/**
+ * One annotation of a page. Geometry is as fractions of the displayed page, y down. An annotation
+ * with no [id] was written directly in the page's `Annots` and no operation can name it; one with
+ * [drawnByLibrary] false keeps the appearance it came with, so its colour and place cannot be changed.
+ */
+data class PdfAnnotation(
+    val id: PdfAnnotationId?,
+    val kind: PdfAnnotationKind,
+    val drawnByLibrary: Boolean,
+    val rect: PdfBox,
+    val quads: List<PdfBox>,
+    val strokes: List<List<PdfPoint>>,
+    val contents: String?,
+    val colour: PdfColour?,
+    /** The `F` flags: bit 1 of the PDF is value 1, bit 2 is value 2, and so on. */
+    val flags: Long,
 )
 
 /** A box on a page as fractions of the displayed page (CropBox, rotation applied), y down. */
@@ -112,6 +149,53 @@ sealed interface PdfOp {
             .put("modified", modified)
     }
 
+    /** Adds a note on [page] whose icon's top left corner is at [at] (fractions of the page), reading [text]. */
+    data class AddNote(
+        val page: Int,
+        val at: PdfPoint,
+        val text: String,
+        val colour: PdfColour,
+        val modified: String,
+    ) : PdfOp {
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "addNote")
+            .put("page", page + 1)
+            .put("at", JSONArray(listOf(at.x, at.y)))
+            .put("text", text)
+            .put("colour", colour.toJson())
+            .put("modified", modified)
+    }
+
+    /**
+     * Changes the annotation [id] of [page]: each field that is set replaces what it holds. [translate]
+     * moves it by that many fractions of the page. A kind the engine does not draw refuses a colour or a move.
+     */
+    data class EditAnnotation(
+        val page: Int,
+        val id: PdfAnnotationId,
+        val modified: String,
+        val colour: PdfColour? = null,
+        val contents: String? = null,
+        val translate: PdfPoint? = null,
+    ) : PdfOp {
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "editAnnotation")
+            .put("page", page + 1)
+            .put("id", id.toJson())
+            .put("modified", modified)
+            .apply {
+                colour?.let { put("colour", it.toJson()) }
+                contents?.let { put("contents", it) }
+                translate?.let { put("translate", JSONArray(listOf(it.x, it.y))) }
+            }
+    }
+
+    /** Takes the annotation [id] off [page], with the replies and popups that belong to it. */
+    data class DeleteAnnotation(val page: Int, val id: PdfAnnotationId) : PdfOp {
+        override fun toJson(): JSONObject =
+            JSONObject().put("op", "deleteAnnotation").put("page", page + 1).put("id", id.toJson())
+    }
+
     companion object {
         internal fun oneBased(pages: List<Int>): JSONArray = JSONArray(pages.map { it + 1 })
 
@@ -192,6 +276,10 @@ class KernkraftSession private constructor(
     fun links(page: Int): List<PdfEngineLink> =
         parseLinks(KernkraftPdf.callNative(Native.Links, pageRequest(page)))
 
+    /** The annotations of [page] (0-based), in the order the page draws them: the last is on top. */
+    fun annotations(page: Int): List<PdfAnnotation> =
+        parseAnnotations(KernkraftPdf.callNative(Native.Annotations, pageRequest(page)))
+
     /** The buffer pictures are drawn into, kept between calls because they come one at a time and a picture is megabytes. */
     private var pixels: ByteBuffer? = null
 
@@ -267,6 +355,39 @@ class KernkraftSession private constructor(
             }
         }
 
+        internal fun parseAnnotations(answer: JSONObject): List<PdfAnnotation> {
+            val list = answer.getJSONArray("annotations")
+            return List(list.length()) { i ->
+                val a = list.getJSONObject(i)
+                val id = a.optJSONObject("id")
+                val strokes = a.optJSONArray("strokes")
+                val colour = a.optJSONArray("colour")
+                PdfAnnotation(
+                    id = id?.let { PdfAnnotationId(it.getLong("object"), it.getInt("generation")) },
+                    kind = annotationKind(a.getString("kind"), a.optString("subtype")),
+                    drawnByLibrary = a.getBoolean("drawn_by_library"),
+                    rect = box(a.getJSONArray("rect")),
+                    quads = boxes(a.optJSONArray("quads") ?: JSONArray()),
+                    strokes = List(strokes?.length() ?: 0) { s ->
+                        val points = strokes!!.getJSONArray(s)
+                        List(points.length()) { p -> points.getJSONArray(p).let { PdfPoint(it.getDouble(0), it.getDouble(1)) } }
+                    },
+                    contents = if (a.isNull("contents")) null else a.getString("contents"),
+                    colour = colour?.let { PdfColour(it.getDouble(0), it.getDouble(1), it.getDouble(2)) },
+                    flags = a.optLong("flags"),
+                )
+            }
+        }
+
+        private fun annotationKind(kind: String, subtype: String): PdfAnnotationKind = when (kind) {
+            "Highlight" -> PdfAnnotationKind.Highlight
+            "Underline" -> PdfAnnotationKind.Underline
+            "StrikeOut" -> PdfAnnotationKind.StrikeOut
+            "Ink" -> PdfAnnotationKind.Ink
+            "Note" -> PdfAnnotationKind.Note
+            else -> PdfAnnotationKind.Other(subtype.ifEmpty { kind })
+        }
+
         private fun boxes(rects: JSONArray) = List(rects.length()) { box(rects.getJSONArray(it)) }
 
         private fun box(rect: JSONArray) = PdfBox(
@@ -282,6 +403,7 @@ class KernkraftSession private constructor(
                 canUndo = answer.getBoolean("can_undo"),
                 canRedo = answer.getBoolean("can_redo"),
                 modified = answer.getBoolean("modified"),
+                annotation = answer.optJSONObject("annotation")?.let { PdfAnnotationId(it.getLong("object"), it.getInt("generation")) },
             )
         }
     }

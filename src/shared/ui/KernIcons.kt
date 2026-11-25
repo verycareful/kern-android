@@ -66,6 +66,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Slideshow
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Title
@@ -135,6 +136,7 @@ object KernIcons {
     val Slides = Icons.Outlined.Slideshow
     val Pen = Icons.Outlined.Edit
     val Highlight = Icons.Outlined.BorderColor
+    val Note = Icons.Outlined.StickyNote2
     val Merge = Icons.Outlined.CallMerge
     val Split = Icons.Outlined.CallSplit
     val Close = Icons.Outlined.Close
