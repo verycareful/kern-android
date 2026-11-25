@@ -28,6 +28,24 @@ object TestPdfs {
         return file
     }
 
+    /** A PDF with one page per entry of [widths], each that wide and [HEIGHT] tall, so a page is told by its width. */
+    fun makeSized(file: File, widths: List<Int>): File {
+        val doc = PdfDocument()
+        val paint = Paint().apply { color = Color.BLACK; textSize = 24f }
+        widths.forEachIndexed { index, width ->
+            val page = doc.startPage(PdfDocument.PageInfo.Builder(width, HEIGHT, index + 1).create())
+            page.canvas.drawText("page ${index + 1}", 20f, 40f, paint)
+            doc.finishPage(page)
+        }
+        file.parentFile?.mkdirs()
+        file.outputStream().use { doc.writeTo(it) }
+        doc.close()
+        return file
+    }
+
+    /** The width of every page of [file], in page order. */
+    fun pageWidths(file: File): List<Int> = open(file) { r -> (0 until r.pageCount).map { i -> r.openPage(i).use { it.width } } }
+
     fun pageCount(file: File): Int = open(file) { it.pageCount }
 
     /** The width and height of page [index] (0-based) as the renderer reports them. */

@@ -56,6 +56,8 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.RotateLeft
+import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
@@ -148,6 +150,8 @@ object KernIcons {
     val AlignMiddle = Icons.Outlined.VerticalAlignCenter
     val AlignBottom = Icons.Outlined.VerticalAlignBottom
     val Trash = Icons.Outlined.Delete
+    val RotateLeft = Icons.Outlined.RotateLeft
+    val RotateRight = Icons.Outlined.RotateRight
     val Download = Icons.Outlined.Download
     val Info = Icons.Outlined.Info
     val Link = Icons.Outlined.Link

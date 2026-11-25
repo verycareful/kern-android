@@ -170,7 +170,7 @@ fun PdfEditorScreen(
 /**
  * The actions button of the top bar and the drop-down it opens, anchored to the top-right
  * corner. The same button closes it again. Each editing feature adds its own rows here as it
- * lands; for now: Find, Tools (merge / extract) and Save compacted copy.
+ * lands; for now: Find, Tools (organise pages, merge, extract) and Save compacted copy.
  */
 @Composable
 private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCompactedCopy: () -> Unit) {
@@ -369,6 +369,7 @@ private fun BoxScope.PdfToolsLayer(
     val colors = KernTheme.colors
     val snackbar = remember { SnackbarHostState() }
     var extractOpen by remember { mutableStateOf(false) }
+    var organiseOpen by remember { mutableStateOf(false) }
 
     // Save a produced file to a user-chosen SAF location.
     val saveLauncher = rememberLauncherForActivityResult(
@@ -423,6 +424,15 @@ private fun BoxScope.PdfToolsLayer(
                 },
             )
             SheetActionRow(
+                icon = KernIcons.Grid,
+                label = "Organise pages",
+                sublabel = "Reorder, rotate or delete pages",
+                onClick = {
+                    onSheetOpenChange(false)
+                    organiseOpen = true
+                },
+            )
+            SheetActionRow(
                 icon = KernIcons.Split,
                 label = "Extract pages",
                 sublabel = "Save a page range as a new PDF",
@@ -433,6 +443,8 @@ private fun BoxScope.PdfToolsLayer(
             )
         }
     }
+
+    if (organiseOpen) OrganisePagesSheet(vm, onDismiss = { organiseOpen = false })
 
     if (extractOpen) {
         ExtractPagesDialog(
