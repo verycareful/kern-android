@@ -71,7 +71,7 @@ object KernkraftPdf {
     }
 
     /** The session natives, named as in [dispatch]. */
-    internal enum class Native { Open, Close, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact }
+    internal enum class Native { Open, Close, Text, Search, Links, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact }
 
     /**
      * Sends [request] to [native] and returns the engine's answer, or throws a
@@ -98,6 +98,9 @@ object KernkraftPdf {
     private fun dispatch(native: Native, request: String): String = when (native) {
         Native.Open -> nativeOpen(request)
         Native.Close -> nativeClose(request)
+        Native.Text -> nativeText(request)
+        Native.Search -> nativeSearch(request)
+        Native.Links -> nativeLinks(request)
         Native.Apply -> nativeApply(request)
         Native.Undo -> nativeUndo(request)
         Native.Redo -> nativeRedo(request)
@@ -113,6 +116,12 @@ object KernkraftPdf {
     @JvmStatic private external fun nativeOpen(request: String): String
 
     @JvmStatic private external fun nativeClose(request: String): String
+
+    @JvmStatic private external fun nativeText(request: String): String
+
+    @JvmStatic private external fun nativeSearch(request: String): String
+
+    @JvmStatic private external fun nativeLinks(request: String): String
 
     @JvmStatic private external fun nativeApply(request: String): String
 

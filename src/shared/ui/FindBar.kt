@@ -88,7 +88,8 @@ fun FindBar(target: FindTarget, modifier: Modifier = Modifier) {
     val colors = KernTheme.colors
     val count = target.matchCount
     val focus = remember { FocusRequester() }
-    LaunchedEffect(Unit) { if (target.unavailableReason == null) focus.requestFocus() }
+    val available = target.unavailableReason == null
+    LaunchedEffect(available) { if (available) focus.requestFocus() }
     BackHandler(onBack = find::close)
 
     Column(modifier.fillMaxWidth().background(colors.bg)) {

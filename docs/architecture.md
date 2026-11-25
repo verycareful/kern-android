@@ -74,7 +74,7 @@ Every editor has a magnifier in its top bar, left of Save, that opens the find b
 
 The engine (`TextFinder`) is plain Kotlin over `java.util.regex`. With regex off, the find text and the replacement are both literal; with regex on, `^` and `$` match at line boundaries and the replacement takes `$1` and `${name}` group references. Matches that are empty are skipped. A document is searched as segments (a paragraph, a cell, a text box, a chapter block), so a match never runs across two of them. In Word and PowerPoint, replacing inside styled text keeps the style of the first character replaced (`AnnotatedReplace.kt`). Replace all is one undo step where the editor has undo, and changes nothing if any replacement fails. An Excel formula cell is found but never replaced, since writing its text back would turn the formula into plain text.
 
-The Markdown preview and PDF can only find. The preview uses the WebView's own search; PDF uses `PdfTextLayer` (`src/editors/pdf/PdfTextLayer.kt`), which the framework renderer provides from Android 15 and which also serves text selection and links. Both search literally and ignore case, so the toggles are greyed out there.
+The Markdown preview and PDF can only find. The preview uses the WebView's own search; PDF uses `PdfTextLayer` (`src/editors/pdf/PdfTextLayer.kt`), read through the kernkraft engine session that opens with the document, so it works on every supported Android version and also serves text selection and links. Both search literally and ignore case, so the toggles are greyed out there.
 
 ## Open source notices
 

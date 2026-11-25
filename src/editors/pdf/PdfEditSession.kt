@@ -3,6 +3,7 @@ package dev.kern.editors.pdf
 import dev.kern.pdfbridge.KernkraftSession
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfStep
+import kotlinx.coroutines.CoroutineDispatcher
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
@@ -74,6 +75,9 @@ class PdfEditSession private constructor(
         if (appended.appended > 0) appendTo(viewFile, updateFile)
         updateFile.delete()
     }
+
+    /** The text of the document as it stands, read through the engine; its calls run on [dispatcher]. */
+    fun textLayer(dispatcher: CoroutineDispatcher): PdfTextLayer = KernkraftTextLayer(engine, dispatcher)
 
     /** Writes the document as it stands as a new compacted file in the session folder and gives that file back. */
     fun compact(): File {

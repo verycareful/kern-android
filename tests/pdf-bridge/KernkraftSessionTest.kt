@@ -79,4 +79,48 @@ class KernkraftSessionTest {
         }.exceptionOrNull() as PdfEngineException
         assertFalse(failure.needsCompactedCopy)
     }
+
+    @Test
+    fun text_lines_keep_their_boxes_and_drop_blank_lines() {
+        val lines = KernkraftSession.parseLines(
+            JSONObject(
+                """{"ok":true,"revision":0,"tagged":false,"blocks":[],"lines":[
+                    {"block":0,"text":"Hello","rect":[0.1,0.2,0.5,0.25],"glyphs":[]},
+                    {"block":0,"text":"  ","rect":[0.1,0.3,0.2,0.35],"glyphs":[]},
+                    {"block":1,"text":"World","rect":[0.1,0.4,0.6,0.45],"glyphs":[]}]}""",
+            ),
+        )
+        assertEquals(listOf("Hello", "World"), lines.map { it.text })
+        assertEquals(PdfBox(0.1f, 0.2f, 0.5f, 0.25f), lines[0].box)
+    }
+
+    @Test
+    fun a_page_without_text_has_no_lines() {
+        val lines = KernkraftSession.parseLines(JSONObject("""{"ok":true,"revision":0,"tagged":false,"blocks":[],"lines":[]}"""))
+        assertEquals(emptyList<PdfTextLineBox>(), lines)
+    }
+
+    @Test
+    fun a_match_spanning_two_lines_has_two_boxes() {
+        val found = KernkraftSession.parseMatches(
+            JSONObject("""{"ok":true,"matches":[{"rects":[[0.1,0.1,0.9,0.15],[0.1,0.16,0.3,0.21]]},{"rects":[[0.5,0.5,0.6,0.55]]}]}"""),
+        )
+        assertEquals(listOf(2, 1), found.map { it.boxes.size })
+        assertEquals(PdfBox(0.1f, 0.16f, 0.3f, 0.21f), found[0].boxes[1])
+    }
+
+    @Test
+    fun links_give_an_address_or_a_page_from_zero_and_skip_the_unresolved() {
+        val links = KernkraftSession.parseLinks(
+            JSONObject(
+                """{"ok":true,"links":[
+                    {"rects":[[0.1,0.1,0.2,0.2]],"uri":"https://example.org"},
+                    {"rects":[[0.3,0.3,0.4,0.4]],"page":3,"x":0.0,"y":0.0,"zoom":null},
+                    {"rects":[[0.5,0.5,0.6,0.6]]}]}""",
+            ),
+        )
+        assertEquals(2, links.size)
+        assertEquals("https://example.org", (links[0] as PdfEngineLink.Uri).uri)
+        assertEquals(2, (links[1] as PdfEngineLink.Page).page)
+    }
 }

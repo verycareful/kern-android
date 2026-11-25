@@ -21,6 +21,7 @@ import dev.kern.shared.find.FindState
 import dev.kern.shared.find.FindTarget
 import dev.kern.shared.io.DocumentIo
 import dev.kern.shared.ui.ExternalLinks
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.DelicateCoroutinesApi
@@ -59,7 +60,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     override val find = FindState()
 
+    /** The text of the document: set once the engine session is open, and the same layer through every edit. */
     private var textLayer by mutableStateOf<PdfTextLayer?>(null)
+
+    /** Why there is no text layer, when the session could not be opened; null while it is still opening. */
+    private var textFailure by mutableStateOf<String?>(null)
+
+    /** Bumped by every edit, undo and redo: what was found or read from the text is out of date. */
+    private var textRevision by mutableIntStateOf(0)
 
     /** Matches of the current search across every page, in page order. */
     var pdfMatches by mutableStateOf<List<PdfTextMatch>>(emptyList())
@@ -69,23 +77,33 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     override val matchCount: Int get() = if (searchQuery.isEmpty()) 0 else pdfMatches.size
     override val supportsOptions: Boolean get() = false
-    override val unavailableReason: String? get() = if (!loading && error == null && textLayer == null) PDF_TEXT_NEEDS_ANDROID_15 else null
+    override val unavailableReason: String?
+        get() = if (loading || error != null || textLayer != null) null else textFailure ?: PREPARING_TEXT
 
     val currentMatch: PdfTextMatch? get() = if (searchQuery.isEmpty()) null else pdfMatches.getOrNull(find.currentIn(pdfMatches.size))
 
     // Text selection
 
-    /** Whether page text can be selected here: the device has a PDF text layer. */
+    /** Whether page text can be selected here: the engine has opened the document. */
     val canSelectText: Boolean get() = textLayer != null
 
     private val lineCache = HashMap<Int, List<PdfTextLine>>()
 
     /** The text lines of [page] for the selectable overlay; empty where there is no text layer. */
     suspend fun pageLines(page: Int): List<PdfTextLine> {
+        val revision = textRevision
         val layer = textLayer ?: return emptyList()
         lineCache[page]?.let { return it }
-        return withContext(Dispatchers.IO) { runCatching { layer.lines(page) }.getOrDefault(emptyList()) }
-            .also { lineCache[page] = it }
+        val lines = try {
+            layer.lines(page)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return emptyList()
+        }
+        // An edit that came while the engine read may have changed the page: only keep what is still current.
+        if (textRevision == revision) lineCache[page] = lines
+        return lines
     }
 
     // Links
@@ -107,10 +125,15 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     fun tapPage(page: Int, point: PagePoint) {
         val layer = textLayer
         if (layer == null) return
+        val revision = textRevision
         viewModelScope.launch {
-            val links = linkCache[page] ?: withContext(Dispatchers.IO) {
-                runCatching { layer.links(page) }.getOrDefault(emptyList())
-            }.also { linkCache[page] = it }
+            val links = linkCache[page] ?: try {
+                layer.links(page)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                return@launch
+            }.also { if (textRevision == revision) linkCache[page] = it }
             when (val link = links.at(point)) {
                 is PdfLink.External -> if (ExternalLinks.isOpenable(link.uri)) pendingLink = link.uri
                 is PdfLink.GoTo -> if (link.page in 0 until pageCount) linkTargetPage = link.page
@@ -127,15 +150,19 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         // Searches every page off the main thread, a moment after typing stops; a new
         // query cancels the search still running for the old one.
         viewModelScope.launch {
-            snapshotFlow { searchQuery to textLayer }.collectLatest { (query, layer) ->
+            snapshotFlow { Triple(searchQuery, textLayer, textRevision) }.collectLatest { (query, layer) ->
                 pdfMatches = emptyList()
                 if (query.isEmpty() || layer == null) return@collectLatest
                 delay(SEARCH_DEBOUNCE_MS)
                 find.message = SEARCHING
-                val found = withContext(Dispatchers.IO) {
-                    (0 until pageCount).flatMap { page ->
-                        ensureActive()
-                        runCatching { layer.search(page, query) }.getOrDefault(emptyList())
+                val found = (0 until pageCount).flatMap { page ->
+                    ensureActive()
+                    try {
+                        layer.search(page, query)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
                     }
                 }
                 pdfMatches = found
@@ -181,13 +208,44 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     var copyPickerRequest by mutableStateOf<String?>(null)
         private set
 
-    private var session: PdfEditSession? = null
+    @Volatile private var session: PdfEditSession? = null
 
     @OptIn(ExperimentalCoroutinesApi::class)
     private val sessionDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
 
     private val sessionDir: File by lazy {
         File(File(getApplication<Application>().cacheDir, "pdf-session"), UUID.randomUUID().toString())
+    }
+
+    /** The edit session, opened if it is not yet. Runs on [sessionDispatcher]. */
+    private fun sessionOrOpen(): PdfEditSession = session ?: PdfEditSession.create(
+        sessionDir,
+        ContentDocumentTarget.forUri(getApplication(), uri ?: throw IOException("No file was provided.")),
+        PdfDate::now,
+    ).also { session = it }
+
+    /**
+     * Opens the engine session in the background once the PDF is showing, so that find, selection and
+     * links are there for the whole life of the document and the first edit finds the session open.
+     */
+    private fun prepareText() {
+        if (!KernkraftPdf.available) {
+            textFailure = "Search, selection and links are unavailable: the PDF engine is not bundled in this build."
+            return
+        }
+        viewModelScope.launch {
+            withContext(sessionDispatcher) { runCatching { sessionOrOpen() } }
+                .onSuccess { publishText() }
+                .onFailure { textFailure = "Search, selection and links are unavailable: ${it.message ?: "the PDF engine could not open this file."}" }
+        }
+    }
+
+    /** Makes the open session's text the document's text layer, if that has not been done. */
+    private fun publishText() {
+        val open = session ?: return
+        if (textLayer != null) return
+        textLayer = open.textLayer(sessionDispatcher)
+        textFailure = null
     }
 
     /** Asks for [op] to be applied. The first edit of an open PDF waits for the warning. */
@@ -270,14 +328,12 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
      */
     private fun launchEdit(action: (PdfEditSession) -> PdfStep) {
         if (editBusy) return
-        val source = uri ?: return
-        val ctx = getApplication<Application>()
+        if (uri == null) return
         editBusy = true
         viewModelScope.launch {
             val result = withContext(sessionDispatcher) {
                 runCatching {
-                    val s = session ?: PdfEditSession.create(sessionDir, ContentDocumentTarget.forUri(ctx, source), PdfDate::now)
-                        .also { session = it }
+                    val s = sessionOrOpen()
                     val step = action(s)
                     step to PdfDocument.open(s.viewFile)
                 }
@@ -298,7 +354,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         val countChanged = step.pageCount != pageCount
         document = doc
         pageCount = step.pageCount
-        textLayer = doc.textLayer
+        textRevision++
+        publishText()
         dirty = step.modified
         canUndo = step.canUndo
         canRedo = step.canRedo
@@ -326,7 +383,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         val open = session
         if (document == null && open != null) {
             runCatching { withContext(sessionDispatcher) { PdfDocument.open(open.viewFile) } }
-                .onSuccess { document = it; textLayer = it.textLayer }
+                .onSuccess { document = it }
         }
         open?.let { dirty = it.step.modified; canUndo = it.step.canUndo; canRedo = it.step.canRedo }
     }
@@ -346,11 +403,11 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 }
             }
             outcome.onSuccess { (result, doc) ->
-                if (doc != null) { document = doc; textLayer = doc.textLayer }
+                if (doc != null) document = doc
                 reportSave(result, onResult)
             }.onFailure {
                 runCatching { withContext(sessionDispatcher) { PdfDocument.open(open.viewFile) } }
-                    .onSuccess { document = it; textLayer = it.textLayer }
+                    .onSuccess { document = it }
                 onResult(false, it.message ?: "Saving failed.")
             }
             editBusy = false
@@ -383,8 +440,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     /** The document as it stands, compacted, as a new file at [target]; the original is not touched. */
     fun saveCompactedTo(target: Uri) {
-        val source = uri ?: return
-        if (editBusy) return
+        if (uri == null || editBusy) return
         if (!KernkraftPdf.available) {
             toolError = "The PDF engine is not bundled in this build."
             return
@@ -394,8 +450,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         viewModelScope.launch {
             val result = withContext(sessionDispatcher) {
                 runCatching {
-                    val s = session ?: PdfEditSession.create(sessionDir, ContentDocumentTarget.forUri(ctx, source), PdfDate::now)
-                        .also { session = it }
+                    val s = sessionOrOpen()
                     val compacted = s.compact()
                     try {
                         (ctx.contentResolver.openOutputStream(target, "wt") ?: throw IOException("Could not open $target for writing"))
@@ -405,6 +460,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                     }
                 }
             }
+            publishText()
             result.onSuccess { toolMessage = "Saved a compacted copy" }
                 .onFailure { toolError = it.message ?: "The compacted copy could not be saved." }
             editBusy = false
@@ -455,8 +511,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 fileName = name
                 document = doc
                 pageCount = doc.pageCount
-                textLayer = doc.textLayer
                 loading = false
+                prepareText()
             }.onFailure {
                 error = it.message ?: "Could not open the PDF."
                 loading = false
@@ -549,6 +605,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         private const val SEARCH_DEBOUNCE_MS = 250L
 
         private val SEARCHING = FindMessage("Searching", isError = false)
+        private const val PREPARING_TEXT = "Getting the text ready"
 
         /** One 1-based page range: "4" or "2-7", after whitespace has been stripped. */
         private val SINGLE_RANGE = Regex("""(\d{1,6})(?:-(\d{1,6}))?""")

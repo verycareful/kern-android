@@ -30,6 +30,26 @@ data class PdfStep(
     val modified: Boolean,
 )
 
+/** A box on a page as fractions of the displayed page (CropBox, rotation applied), y down. */
+data class PdfBox(val left: Float, val top: Float, val right: Float, val bottom: Float)
+
+/** One line of a page's text and the box it is drawn in. */
+data class PdfTextLineBox(val text: String, val box: PdfBox)
+
+/** One match of a search: the boxes covering it, one per line it spans. */
+data class PdfFoundText(val boxes: List<PdfBox>)
+
+/** A link on a page: the boxes that take a tap, and where it goes. */
+sealed interface PdfEngineLink {
+    val boxes: List<PdfBox>
+
+    /** A link out of the document. */
+    data class Uri(override val boxes: List<PdfBox>, val uri: String) : PdfEngineLink
+
+    /** A link to a page of the same document (0-based [page]). */
+    data class Page(override val boxes: List<PdfBox>, val page: Int) : PdfEngineLink
+}
+
 /** A change to the document. Pages are 0-based; [toJson] writes the engine's 1-based request. */
 sealed interface PdfOp {
     fun toJson(): JSONObject
@@ -97,6 +117,21 @@ class KernkraftSession private constructor(
         KernkraftPdf.callNative(Native.Compact, handleRequest().put("out", out.path))
     }
 
+    /** The lines of [page] (0-based), in reading order, with where each is drawn. Blank lines are left out. */
+    fun lines(page: Int): List<PdfTextLineBox> =
+        parseLines(KernkraftPdf.callNative(Native.Text, pageRequest(page)))
+
+    /** Every match of [query] on [page] (0-based): literal, ignoring case. */
+    fun search(page: Int, query: String): List<PdfFoundText> =
+        parseMatches(KernkraftPdf.callNative(Native.Search, pageRequest(page).put("query", query)))
+
+    /**
+     * The links of [page] (0-based) that go somewhere. A link whose destination the engine cannot
+     * resolve to an address or a page has nowhere to take a tap and is left out.
+     */
+    fun links(page: Int): List<PdfEngineLink> =
+        parseLinks(KernkraftPdf.callNative(Native.Links, pageRequest(page)))
+
     override fun close() {
         if (closed) return
         closed = true
@@ -104,6 +139,8 @@ class KernkraftSession private constructor(
     }
 
     private fun handleRequest() = JSONObject().put("handle", handle)
+
+    private fun pageRequest(page: Int) = handleRequest().put("page", page + 1)
 
     private fun step(native: Native, request: JSONObject): PdfStep = parseStep(KernkraftPdf.callNative(native, request))
 
@@ -116,6 +153,37 @@ class KernkraftSession private constructor(
             val answer = KernkraftPdf.callNative(Native.Open, JSONObject().put("path", path.path))
             return KernkraftSession(answer.getLong("handle"), answer.getInt("pages"))
         }
+
+        internal fun parseLines(answer: JSONObject): List<PdfTextLineBox> {
+            val lines = answer.getJSONArray("lines")
+            return (0 until lines.length()).map { lines.getJSONObject(it) }
+                .filter { it.getString("text").isNotBlank() }
+                .map { PdfTextLineBox(it.getString("text"), box(it.getJSONArray("rect"))) }
+        }
+
+        internal fun parseMatches(answer: JSONObject): List<PdfFoundText> {
+            val matches = answer.getJSONArray("matches")
+            return List(matches.length()) { PdfFoundText(boxes(matches.getJSONObject(it).getJSONArray("rects"))) }
+        }
+
+        internal fun parseLinks(answer: JSONObject): List<PdfEngineLink> {
+            val links = answer.getJSONArray("links")
+            return (0 until links.length()).mapNotNull { i ->
+                val link = links.getJSONObject(i)
+                val boxes = boxes(link.getJSONArray("rects"))
+                when {
+                    link.has("uri") -> PdfEngineLink.Uri(boxes, link.getString("uri"))
+                    link.has("page") -> PdfEngineLink.Page(boxes, link.getInt("page") - 1)
+                    else -> null
+                }
+            }
+        }
+
+        private fun boxes(rects: JSONArray) = List(rects.length()) { box(rects.getJSONArray(it)) }
+
+        private fun box(rect: JSONArray) = PdfBox(
+            rect.getDouble(0).toFloat(), rect.getDouble(1).toFloat(), rect.getDouble(2).toFloat(), rect.getDouble(3).toFloat(),
+        )
 
         internal fun parseStep(answer: JSONObject): PdfStep {
             val changed = answer.optJSONArray("changed_pages")
