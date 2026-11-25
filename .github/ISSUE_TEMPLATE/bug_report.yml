@@ -6,7 +6,7 @@ body:
     attributes:
       value: |
         Thanks for reporting. Please fill in every required field: a report without the version, device and steps usually needs a round of questions before anyone can look at it.
-        Security problems go through [SECURITY.md](https://github.com/verycareful/kern/blob/main/SECURITY.md), not here.
+        Security problems go through [SECURITY.md](https://github.com/verycareful/kern-android/blob/main/SECURITY.md), not here.
   - type: input
     id: version
     attributes:

@@ -37,7 +37,7 @@ Setext heading
 
 ## Links
 
-- Inline: [Kern on GitHub](https://github.com/verycareful/kern "Kern")
+- Inline: [Kern on GitHub](https://github.com/verycareful/kern-android "Kern")
 - Autolinks: https://commonmark.org and www.example.com
 - Angle brackets: <https://spec.commonmark.org>
 - Email: <hello@example.com>

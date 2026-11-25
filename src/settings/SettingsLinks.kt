@@ -35,7 +35,7 @@ import dev.kern.shared.ui.KernIcons
 // stays a manageable size.
 
 internal const val LICENSE_LABEL = "AGPL-3.0"
-internal const val SOURCE_URL = "https://github.com/verycareful/kern"
+internal const val SOURCE_URL = "https://github.com/verycareful/kern-android"
 internal const val QYRA_URL = "https://github.com/zParik/Qyra"
 
 /**
