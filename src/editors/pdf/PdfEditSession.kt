@@ -3,6 +3,7 @@ package dev.kern.editors.pdf
 import android.graphics.Bitmap
 import dev.kern.pdfbridge.KernkraftSession
 import dev.kern.pdfbridge.PdfAnnotation
+import dev.kern.pdfbridge.PdfPageBlocks
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfStep
 import kotlinx.coroutines.CoroutineDispatcher
@@ -41,6 +42,8 @@ class PdfEditSession private constructor(
     private val target: DocumentTarget,
     private var base: FileStamp,
     private val now: () -> String,
+    /** Why the engine has no system fonts to set text in, or null when it has them; text can still be changed in the fonts a page holds. */
+    val fontsProblem: String?,
 ) : Closeable {
 
     /** Set when `view.pdf` may not hold the disk bytes it should; the next rebuild reads them again. */
@@ -80,6 +83,9 @@ class PdfEditSession private constructor(
 
     /** The text of the document as it stands, read through the engine; its calls run on [dispatcher]. */
     fun textLayer(dispatcher: CoroutineDispatcher): PdfTextLayer = KernkraftTextLayer(engine, dispatcher)
+
+    /** The text blocks of [page] (0-based) of the document as it stands, with the revision they were read at. */
+    fun textBlocks(page: Int): PdfPageBlocks = engine.textBlocks(page)
 
     /** The annotations of [page] (0-based) of the document as it stands. */
     fun annotations(page: Int): List<PdfAnnotation> = engine.annotations(page)
@@ -239,7 +245,8 @@ class PdfEditSession private constructor(
             try {
                 val stamp = copyStamped(target.openRead(), sessionFile)
                 sessionFile.copyTo(File(dir, VIEW_NAME), overwrite = true)
-                return PdfEditSession(dir, KernkraftSession.open(sessionFile), target, stamp, now)
+                val fontsProblem = SystemFonts.register()
+                return PdfEditSession(dir, KernkraftSession.open(sessionFile), target, stamp, now, fontsProblem)
             } catch (e: IOException) {
                 dir.deleteRecursively()
                 throw e

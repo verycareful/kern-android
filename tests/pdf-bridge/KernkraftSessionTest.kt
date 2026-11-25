@@ -261,4 +261,70 @@ class KernkraftSessionTest {
         assertEquals(3, json.getInt("page"))
         assertEquals(9, json.getJSONObject("id").getInt("object"))
     }
+
+    @Test
+    fun blocks_are_read_with_their_lines_joined_and_the_reason_a_block_is_refused() {
+        val page = KernkraftSession.parseBlocks(
+            JSONObject(
+                """{"ok":true,"revision":7,"tagged":false,
+                   "lines":[{"block":0,"text":"First line","rect":[0.1,0.1,0.5,0.12],"glyphs":[]},
+                            {"block":0,"text":"second line","rect":[0.1,0.12,0.5,0.14],"glyphs":[]},
+                            {"block":1,"text":"Hidden","rect":[0.1,0.3,0.2,0.32],"glyphs":[]}],
+                   "blocks":[{"id":0,"rect":[0.1,0.1,0.5,0.14],"editable":true},
+                             {"id":1,"rect":[0.1,0.3,0.2,0.32],"editable":false,"reason":"NoSize"}]}""",
+            ),
+        )
+        assertEquals(7L, page.revision)
+        assertEquals(2, page.blocks.size)
+        val first = page.blocks[0]
+        assertEquals("First line\nsecond line", first.text)
+        assertTrue(first.editable)
+        assertEquals(null, first.reason)
+        assertEquals(PdfBox(0.1f, 0.1f, 0.5f, 0.14f), first.box)
+        val second = page.blocks[1]
+        assertFalse(second.editable)
+        assertEquals("NoSize", second.reason)
+        assertEquals("Hidden", second.text)
+    }
+
+    @Test
+    fun a_page_without_text_has_no_blocks_but_still_a_revision() {
+        val page = KernkraftSession.parseBlocks(JSONObject("""{"ok":true,"revision":2,"tagged":false,"blocks":[],"lines":[]}"""))
+        assertEquals(2L, page.revision)
+        assertTrue(page.blocks.isEmpty())
+    }
+
+    @Test
+    fun a_text_edit_is_sent_with_the_page_from_one_the_block_and_the_revision() {
+        val json = PdfOp.EditText(page = 1, block = 4, revision = 9, text = "New words").toJson()
+        assertEquals("editText", json.getString("op"))
+        assertEquals(2, json.getInt("page"))
+        assertEquals(4, json.getInt("block"))
+        assertEquals(9L, json.getLong("revision"))
+        assertEquals("New words", json.getString("text"))
+        assertFalse(json.has("family") || json.has("size") || json.has("colour"))
+    }
+
+    @Test
+    fun a_text_edit_sends_the_style_fields_that_are_set() {
+        val json = PdfOp.EditText(0, 0, 1, "x", family = "Serif", size = 12.0, colour = PdfColour(0.0, 0.0, 1.0)).toJson()
+        assertEquals("Serif", json.getString("family"))
+        assertEquals(12.0, json.getDouble("size"), 0.0)
+        assertEquals(1.0, json.getJSONArray("colour").getDouble(2), 0.0)
+    }
+
+    @Test
+    fun a_step_carries_the_notes_the_engine_gave() {
+        val step = KernkraftSession.parseStep(
+            JSONObject(
+                """{"ok":true,"revision":4,"pages":1,"changed_pages":[1],"can_undo":true,"can_redo":false,"modified":true,
+                   "notes":["substitute font used for: ABCDEF+Arial (sans)"]}""",
+            ),
+        )
+        assertEquals(listOf("substitute font used for: ABCDEF+Arial (sans)"), step.notes)
+        val none = KernkraftSession.parseStep(
+            JSONObject("""{"ok":true,"revision":4,"pages":1,"changed_pages":[],"can_undo":true,"can_redo":false,"modified":true}"""),
+        )
+        assertTrue(none.notes.isEmpty())
+    }
 }

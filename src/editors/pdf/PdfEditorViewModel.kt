@@ -20,8 +20,10 @@ import dev.kern.pdfbridge.PdfColour
 import dev.kern.pdfbridge.PdfDate
 import dev.kern.pdfbridge.PdfEngineException
 import dev.kern.pdfbridge.PdfOp
+import dev.kern.pdfbridge.PdfPageBlocks
 import dev.kern.pdfbridge.PdfPoint
 import dev.kern.pdfbridge.PdfStep
+import dev.kern.pdfbridge.PdfTextBlock
 import dev.kern.shared.find.FindMessage
 import dev.kern.shared.find.FindState
 import dev.kern.shared.find.FindTarget
@@ -263,6 +265,73 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
+    // Text editing
+
+    private val blockCache = HashMap<Int, PdfPageBlocks>()
+
+    /**
+     * The text blocks of [page] as the document stands, with the revision they were read at; null when
+     * the engine cannot read them. A revision is good only until the next edit, so every edit drops
+     * what is kept, whichever page it changed.
+     */
+    suspend fun blocksOf(page: Int): PdfPageBlocks? {
+        val revision = textRevision
+        blockCache[page]?.let { return it }
+        val open = session ?: return null
+        val read = try {
+            withContext(sessionDispatcher) { open.textBlocks(page) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            return null
+        }
+        if (textRevision == revision) blockCache[page] = read
+        return read
+    }
+
+    /** A block being changed: what it said when it was read, and the revision of the document it was read at. */
+    data class TextEdit(val page: Int, val block: PdfTextBlock, val revision: Long)
+
+    /** The block whose text is being changed, shown as a field over the block; null when none is. */
+    var textEdit by mutableStateOf<TextEdit?>(null)
+        private set
+
+    /** What the field over the block holds now. */
+    var textDraft by mutableStateOf("")
+        private set
+
+    fun changeTextDraft(text: String) { textDraft = text }
+
+    /** A tap at [point] on [page] while changing text: opens the block there for editing, or says why it cannot be. */
+    fun tapTextBlock(page: Int, point: PagePoint) {
+        if (editBusy || textEdit != null) return
+        viewModelScope.launch {
+            val read = blocksOf(page)
+            if (read == null) {
+                toolError = "Kern could not read the text of this page."
+                return@launch
+            }
+            val block = TextEditModel.blockAt(read.blocks, point)
+            when {
+                block == null -> toolMessage = TextEditModel.NOTHING_THERE
+                !block.editable -> toolMessage = TextEditModel.refusal(block.reason)
+                else -> {
+                    textDraft = block.text
+                    textEdit = TextEdit(page, block, read.revision)
+                }
+            }
+        }
+    }
+
+    fun cancelTextEdit() { textEdit = null }
+
+    /** Puts the field's text into the block: nothing is sent when it is as it was. An empty field takes the block's text out. */
+    fun commitTextEdit() {
+        val open = textEdit ?: return
+        if (textDraft == open.block.text) { textEdit = null; return }
+        requestEdit(PdfOp.EditText(open.page, open.block.id, open.revision, textDraft))
+    }
+
     // Links
 
     /** A web, mail or phone link the user tapped, waiting for them to confirm opening it. */
@@ -432,8 +501,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     // --- Markup and ink -------------------------------------------------------------
 
-    /** What a touch on a page does: scroll and select as usual, mark text, or draw. */
-    enum class AnnotateMode { None, Markup, Ink, Note }
+    /** What a touch on a page does: scroll and select as usual, mark text, draw, place a note, or change text. */
+    enum class AnnotateMode { None, Markup, Ink, Note, Text }
 
     var annotateMode by mutableStateOf(AnnotateMode.None)
         private set
@@ -470,11 +539,17 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     fun startNote() = enter(AnnotateMode.Note)
 
+    fun startTextEdit() {
+        enter(AnnotateMode.Text)
+        session?.fontsProblem?.let { toolMessage = TextEditModel.fontsProblemMessage(it) }
+    }
+
     fun finishAnnotating() = enter(AnnotateMode.None)
 
     private fun enter(mode: AnnotateMode) {
         annotateMode = mode
         markupSelection = null
+        textEdit = null
         deselect()
     }
 
@@ -683,6 +758,9 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         inkAdopted()
         textRevision++
         annotationCache.keys.retainAll { it !in step.changedPages }
+        blockCache.clear()
+        textEdit = null
+        TextEditModel.noteFor(step.notes)?.let { toolMessage = it }
         if (countChanged) annotationCache.clear()
         publishText()
         dirty = step.modified
@@ -709,6 +787,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         reselect = null
         deselect()
         toolError = when {
+            failure is PdfEngineException && TextEditModel.missingLetter(failure.message) != null -> TextEditModel.missingLetter(failure.message)
             failure is PdfEngineException && failure.needsCompactedCopy ->
                 "This PDF had to be repaired to be read, so Kern cannot edit it in place. ${failure.message}"
             else -> failure.message ?: "The edit failed."

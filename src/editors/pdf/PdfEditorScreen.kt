@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -201,6 +202,7 @@ private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCo
             }
             ActionRow("Draw", KernIcons.Pen, enabled = !vm.editBusy) { expanded = false; vm.startInk() }
             ActionRow("Add note", KernIcons.Note, enabled = !vm.editBusy) { expanded = false; vm.startNote() }
+            ActionRow("Edit page text", KernIcons.Text, enabled = vm.canSelectText && !vm.editBusy) { expanded = false; vm.startTextEdit() }
             ActionRow("Tools", KernIcons.Merge) { expanded = false; onTools() }
             ActionRow("Save compacted copy", KernIcons.Save, enabled = !vm.editBusy) {
                 expanded = false
@@ -294,7 +296,10 @@ private fun PdfPager(
     }
 
     Box(
+        // The screen is edge to edge, so the keyboard covers what is not lifted above it: the page area
+        // shrinks to what is left, which keeps the field being typed in and the bar in view.
         modifier
+            .imePadding()
             .background(colors.sunken)
             .onSizeChanged { containerWidthPx = it.width }
             .pinchZoom(zoom),
@@ -671,6 +676,7 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
                     SelectionOutline(vm, index, Modifier.matchParentSize())
                 }
                 PdfEditorViewModel.AnnotateMode.Note -> NoteTapLayer(vm, index, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Text -> TextBlocksLayer(vm, index, Modifier.matchParentSize())
                 PdfEditorViewModel.AnnotateMode.Markup -> MarkupLayer(vm, index, lines, Modifier.matchParentSize())
                 PdfEditorViewModel.AnnotateMode.Ink -> InkLayer(vm, index, Modifier.matchParentSize())
             }

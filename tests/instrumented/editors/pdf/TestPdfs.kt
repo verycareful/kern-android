@@ -59,6 +59,30 @@ object TestPdfs {
             "<< /Type /Annot /Subtype /Stamp /Rect [150 200 250 230] /F 4 >>",
             "<< /Type /Annot /Subtype /Text /Name /Note /Rect [150 300 175 325] /Contents (Locked) /C [1 1 0] /F 132 >>",
         )
+        return writeObjects(file, bodies)
+    }
+
+    /**
+     * A PDF of [pages] pages, 300 x 400 points, each showing `page N` in Helvetica, which the file does not
+     * embed, 24 points tall with its baseline 40 points from the top. Unlike [make], whose text the framework
+     * draws with fonts made of shapes, this text is real text that the engine can change.
+     */
+    fun withEditableText(file: File, pages: Int): File {
+        val bodies = mutableListOf(
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [${(0 until pages).joinToString(" ") { "${4 + it * 2} 0 R" }}] /Count $pages >>",
+            "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>",
+        )
+        repeat(pages) { index ->
+            val content = "BT /F1 24 Tf 20 ${HEIGHT - 40} Td (page ${index + 1}) Tj ET"
+            bodies += "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $WIDTH $HEIGHT] /Resources << /Font << /F1 3 0 R >> >> /Contents ${5 + index * 2} 0 R >>"
+            bodies += "<< /Length ${content.length} >>\nstream\n$content\nendstream"
+        }
+        return writeObjects(file, bodies)
+    }
+
+    /** Writes [bodies] as objects 1, 2, ... of a PDF, object 1 being the catalog, with a cross-reference table. */
+    private fun writeObjects(file: File, bodies: List<String>): File {
         val out = java.io.ByteArrayOutputStream()
         fun write(text: String) = out.write(text.toByteArray(Charsets.ISO_8859_1))
         write("%PDF-1.4\n")

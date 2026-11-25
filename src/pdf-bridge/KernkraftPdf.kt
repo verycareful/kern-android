@@ -52,6 +52,13 @@ object KernkraftPdf {
         return call { nativeExtract(request.toString()) }
     }
 
+    /**
+     * Hands the engine the font files [paths] for the text it sets in a face of its own and for fonts a
+     * file leaves out. It applies to documents opened afterwards. Gives how many faces were indexed.
+     */
+    fun setSystemFonts(paths: List<String>): Int =
+        callNative(Native.SetSystemFonts, JSONObject().put("paths", JSONArray(paths))).getInt("faces")
+
     private inline fun call(block: () -> String): Result {
         if (!available) return Result.Failure("PDF engine ($LIBRARY_FILE) is not bundled in this build.")
         return runCatching { parseResult(block()) }
@@ -71,7 +78,7 @@ object KernkraftPdf {
     }
 
     /** The session natives, named as in [dispatch]. */
-    internal enum class Native { Open, Close, Text, Search, Links, Annotations, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact, RenderSize }
+    internal enum class Native { Open, Close, Text, Search, Links, Annotations, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact, RenderSize, SetSystemFonts }
 
     /**
      * Sends [request] to [native] and returns the engine's answer, or throws a
@@ -123,6 +130,7 @@ object KernkraftPdf {
         Native.ConfirmAppended -> nativeConfirmAppended(request)
         Native.Compact -> nativeCompact(request)
         Native.RenderSize -> nativeRenderSize(request)
+        Native.SetSystemFonts -> nativeSetSystemFonts(request)
     }
 
     @JvmStatic private external fun nativeMerge(request: String): String
@@ -154,6 +162,8 @@ object KernkraftPdf {
     @JvmStatic private external fun nativeCompact(request: String): String
 
     @JvmStatic private external fun nativeRenderSize(request: String): String
+
+    @JvmStatic private external fun nativeSetSystemFonts(request: String): String
 
     @JvmStatic private external fun nativeRender(request: String, pixels: java.nio.ByteBuffer): String
 

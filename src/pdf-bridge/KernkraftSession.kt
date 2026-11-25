@@ -32,6 +32,8 @@ data class PdfStep(
     val modified: Boolean,
     /** The annotation the step added, when it added one. */
     val annotation: PdfAnnotationId? = null,
+    /** What the engine says the user should know about the step, such as a substitute font it set text in. */
+    val notes: List<String> = emptyList(),
 )
 
 /** The name the engine gives an annotation: its object and generation. Operations name an annotation by it. */
@@ -78,6 +80,16 @@ data class PdfBox(val left: Float, val top: Float, val right: Float, val bottom:
  * size has a degenerate box.
  */
 data class PdfTextLineBox(val text: String, val box: PdfBox, val glyphs: List<PdfBox> = emptyList())
+
+/**
+ * A block of a page's text: the unit a text edit replaces. [id] is good only at the [PdfPageBlocks.revision]
+ * it was read at. [reason] is the engine's name for what stops an edit, and is set when [editable] is false.
+ * [text] is the block's lines, one per line of the page.
+ */
+data class PdfTextBlock(val id: Int, val box: PdfBox, val editable: Boolean, val reason: String?, val text: String)
+
+/** The blocks of one page, as the document stood at [revision]. */
+data class PdfPageBlocks(val revision: Long, val blocks: List<PdfTextBlock>)
 
 /** One match of a search: the boxes covering it, one per line it spans. */
 data class PdfFoundText(val boxes: List<PdfBox>)
@@ -196,6 +208,33 @@ sealed interface PdfOp {
             JSONObject().put("op", "deleteAnnotation").put("page", page + 1).put("id", id.toJson())
     }
 
+    /**
+     * Sets [text] as the text of block [block] of [page], which was read at [revision]; the engine refuses
+     * the edit when the document has moved on since. Empty text takes the block's text out. A field that is
+     * not set keeps what the block had.
+     */
+    data class EditText(
+        val page: Int,
+        val block: Int,
+        val revision: Long,
+        val text: String,
+        val family: String? = null,
+        val size: Double? = null,
+        val colour: PdfColour? = null,
+    ) : PdfOp {
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "editText")
+            .put("page", page + 1)
+            .put("block", block)
+            .put("revision", revision)
+            .put("text", text)
+            .apply {
+                family?.let { put("family", it) }
+                size?.let { put("size", it) }
+                colour?.let { put("colour", it.toJson()) }
+            }
+    }
+
     companion object {
         internal fun oneBased(pages: List<Int>): JSONArray = JSONArray(pages.map { it + 1 })
 
@@ -264,6 +303,10 @@ class KernkraftSession private constructor(
     /** The lines of [page] (0-based), in reading order, with where each is drawn. Blank lines are left out. */
     fun lines(page: Int): List<PdfTextLineBox> =
         parseLines(KernkraftPdf.callNative(Native.Text, pageRequest(page)))
+
+    /** The text blocks of [page] (0-based) and the revision of the document they were read at. */
+    fun textBlocks(page: Int): PdfPageBlocks =
+        parseBlocks(KernkraftPdf.callNative(Native.Text, pageRequest(page)))
 
     /** Every match of [query] on [page] (0-based): literal, ignoring case. */
     fun search(page: Int, query: String): List<PdfFoundText> =
@@ -337,6 +380,30 @@ class KernkraftSession private constructor(
                 }
         }
 
+        internal fun parseBlocks(answer: JSONObject): PdfPageBlocks {
+            val lines = answer.getJSONArray("lines")
+            val textOf = HashMap<Int, MutableList<String>>()
+            for (i in 0 until lines.length()) {
+                val line = lines.getJSONObject(i)
+                textOf.getOrPut(line.getInt("block")) { mutableListOf() }.add(line.getString("text"))
+            }
+            val blocks = answer.getJSONArray("blocks")
+            return PdfPageBlocks(
+                revision = answer.getLong("revision"),
+                blocks = List(blocks.length()) { i ->
+                    val b = blocks.getJSONObject(i)
+                    val id = b.getInt("id")
+                    PdfTextBlock(
+                        id = id,
+                        box = box(b.getJSONArray("rect")),
+                        editable = b.getBoolean("editable"),
+                        reason = if (b.isNull("reason")) null else b.optString("reason"),
+                        text = textOf[id].orEmpty().joinToString("\n"),
+                    )
+                },
+            )
+        }
+
         internal fun parseMatches(answer: JSONObject): List<PdfFoundText> {
             val matches = answer.getJSONArray("matches")
             return List(matches.length()) { PdfFoundText(boxes(matches.getJSONObject(it).getJSONArray("rects"))) }
@@ -404,6 +471,7 @@ class KernkraftSession private constructor(
                 canRedo = answer.getBoolean("can_redo"),
                 modified = answer.getBoolean("modified"),
                 annotation = answer.optJSONObject("annotation")?.let { PdfAnnotationId(it.getLong("object"), it.getInt("generation")) },
+                notes = answer.optJSONArray("notes")?.let { notes -> List(notes.length()) { notes.getString(it) } } ?: emptyList(),
             )
         }
     }
