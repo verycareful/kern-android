@@ -195,6 +195,11 @@ private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCo
             containerColor = colors.surface,
         ) {
             ActionRow("Find", KernIcons.Search) { expanded = false; vm.find.open() }
+            ActionRow("Highlight text", KernIcons.Highlight, enabled = vm.canSelectText && !vm.editBusy) {
+                expanded = false
+                vm.startMarkup()
+            }
+            ActionRow("Draw", KernIcons.Pen, enabled = !vm.editBusy) { expanded = false; vm.startInk() }
             ActionRow("Tools", KernIcons.Merge) { expanded = false; onTools() }
             ActionRow("Save compacted copy", KernIcons.Save, enabled = !vm.editBusy) {
                 expanded = false
@@ -216,6 +221,9 @@ private fun ActionRow(label: String, icon: androidx.compose.ui.graphics.vector.I
 }
 
 private const val REOPEN_GUARD_MS = 250L
+
+/** The page indicator sits this far above the bottom edge while the marking bar is shown. */
+private val ANNOTATE_BAR_CLEARANCE = 120.dp
 
 /** The name the save picker suggests for a compacted copy of [fileName]. */
 private fun compactedCopyName(fileName: String): String = "${OriginalCopy.stem(fileName.ifBlank { "document" })} (compacted).pdf"
@@ -264,6 +272,7 @@ private fun PdfPager(
     val listState = rememberLazyListState()
     var containerWidthPx by remember { mutableIntStateOf(0) }
     var goToOpen by remember { mutableStateOf(false) }
+    val annotating = vm.annotateMode != PdfEditorViewModel.AnnotateMode.None
 
     // An internal link was tapped: show the page it points at.
     LaunchedEffect(vm.linkTargetPage) {
@@ -307,7 +316,7 @@ private fun PdfPager(
             Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(12.dp)
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = if (annotating) ANNOTATE_BAR_CLEARANCE else 12.dp)
                     .clip(RoundedCornerShape(KernRadius.field))
                     .background(colors.surface)
                     .clickable(onClickLabel = "Go to page") { goToOpen = true }
@@ -333,6 +342,8 @@ private fun PdfPager(
                 Text("${(zoom.scale * 100).roundToInt()}%", style = KernType.meta, color = hue)
             }
         }
+
+        if (annotating) AnnotateBar(vm, Modifier.align(Alignment.BottomCenter))
 
         PdfToolsLayer(vm, toolsSheetOpen, onToolsSheetOpenChange)
     }
@@ -567,7 +578,7 @@ private fun PdfTextOverlay(lines: List<PdfTextLine>, modifier: Modifier = Modifi
                 Box(Modifier.fillMaxSize()) {
                     for (line in lines) {
                         if (line.rect.right > line.rect.left && line.rect.bottom > line.rect.top) {
-                            key(line) { OverlayLine(line, pageWidth, pageHeight, measurer) }
+                            key(line.text, line.rect) { OverlayLine(line, pageWidth, pageHeight, measurer) }
                         }
                     }
                 }
@@ -627,8 +638,11 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
             Box(
                 Modifier
                     .width(widthDp)
-                    .pointerInput(index) {
-                        detectTapGestures { vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height)) }
+                    .pointerInput(index, vm.annotateMode) {
+                        // Marking and drawing take the touches themselves; a tap on a link is for reading.
+                        if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.None) {
+                            detectTapGestures { vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height)) }
+                        }
                     },
             ) {
             Image(
@@ -642,7 +656,11 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
                     .clip(RoundedCornerShape(KernRadius.pdfPage))
                     .border(1.dp, colors.borderSoft, RoundedCornerShape(KernRadius.pdfPage)),
             )
-            PdfTextOverlay(lines, Modifier.matchParentSize())
+            when (vm.annotateMode) {
+                PdfEditorViewModel.AnnotateMode.None -> PdfTextOverlay(lines, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Markup -> MarkupLayer(vm, index, lines, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Ink -> InkLayer(vm, index, Modifier.matchParentSize())
+            }
             }
         }
     } else {

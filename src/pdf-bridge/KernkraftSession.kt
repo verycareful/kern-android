@@ -3,10 +3,12 @@
 
 package dev.kern.pdfbridge
 
+import android.graphics.Bitmap
 import dev.kern.pdfbridge.KernkraftPdf.Native
 import java.io.Closeable
 import java.io.File
 import java.io.IOException
+import java.nio.ByteBuffer
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -33,8 +35,12 @@ data class PdfStep(
 /** A box on a page as fractions of the displayed page (CropBox, rotation applied), y down. */
 data class PdfBox(val left: Float, val top: Float, val right: Float, val bottom: Float)
 
-/** One line of a page's text and the box it is drawn in. */
-data class PdfTextLineBox(val text: String, val box: PdfBox)
+/**
+ * One line of a page's text and the box it is drawn in. [glyphs] are the boxes of its glyphs in
+ * LOGICAL order (the order the characters are read in, not left to right); a glyph of text of no
+ * size has a degenerate box.
+ */
+data class PdfTextLineBox(val text: String, val box: PdfBox, val glyphs: List<PdfBox> = emptyList())
 
 /** One match of a search: the boxes covering it, one per line it spans. */
 data class PdfFoundText(val boxes: List<PdfBox>)
@@ -69,9 +75,63 @@ sealed interface PdfOp {
         override fun toJson(): JSONObject = JSONObject().put("op", "remove").put("pages", oneBased(pages))
     }
 
+    /** Marks [quads] (boxes of the selected glyphs, as fractions of the page) of [page] in [colour]. */
+    data class AddMarkup(
+        val kind: MarkupKind,
+        val page: Int,
+        val quads: List<PdfBox>,
+        val colour: PdfColour,
+        val modified: String,
+    ) : PdfOp {
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "addMarkup")
+            .put("kind", kind.wire)
+            .put("page", page + 1)
+            .put("quads", JSONArray(quads.map { box(it) }))
+            .put("colour", colour.toJson())
+            .put("modified", modified)
+    }
+
+    /**
+     * Draws freehand [strokes] (points as fractions of the page) on [page], [widthPoints] wide, in [colour].
+     * One annotation holds every stroke.
+     */
+    data class AddInk(
+        val page: Int,
+        val strokes: List<List<PdfPoint>>,
+        val widthPoints: Double,
+        val colour: PdfColour,
+        val modified: String,
+    ) : PdfOp {
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "addInk")
+            .put("page", page + 1)
+            .put("strokes", JSONArray(strokes.map { stroke -> JSONArray(stroke.map { JSONArray(listOf(it.x, it.y)) }) }))
+            .put("width", widthPoints)
+            .put("colour", colour.toJson())
+            .put("modified", modified)
+    }
+
     companion object {
         internal fun oneBased(pages: List<Int>): JSONArray = JSONArray(pages.map { it + 1 })
+
+        private fun box(b: PdfBox) = JSONArray(listOf(b.left, b.top, b.right, b.bottom))
     }
+}
+
+/** The kinds of text markup the engine writes. [wire] is the name it reads. */
+enum class MarkupKind(val wire: String) {
+    Highlight("highlight"),
+    Underline("underline"),
+    StrikeOut("strikeOut"),
+}
+
+/** A point on a page as fractions of the displayed page, y down. */
+data class PdfPoint(val x: Double, val y: Double)
+
+/** A colour as the engine reads it: red, green and blue from 0 to 1. */
+data class PdfColour(val red: Double, val green: Double, val blue: Double) {
+    internal fun toJson(): JSONArray = JSONArray(listOf(red, green, blue))
 }
 
 /**
@@ -132,9 +192,30 @@ class KernkraftSession private constructor(
     fun links(page: Int): List<PdfEngineLink> =
         parseLinks(KernkraftPdf.callNative(Native.Links, pageRequest(page)))
 
+    /** The buffer pictures are drawn into, kept between calls because they come one at a time and a picture is megabytes. */
+    private var pixels: ByteBuffer? = null
+
+    /**
+     * Draws [page] (0-based) [widthPx] wide the way the engine draws it, annotations included. The
+     * height follows the page.
+     */
+    fun render(page: Int, widthPx: Int): Bitmap {
+        val request = pageRequest(page).put("width_px", widthPx)
+        val size = KernkraftPdf.callNative(Native.RenderSize, request)
+        val width = size.getInt("width")
+        val height = size.getInt("height")
+        val bytes = size.getLong("bytes").toInt()
+        val buffer = pixels?.takeIf { it.capacity() >= bytes } ?: ByteBuffer.allocateDirect(bytes).also { pixels = it }
+        KernkraftPdf.callRender(request, buffer)
+        buffer.limit(bytes).position(0)
+        // Straight RGBA8 with every alpha 255 is what ARGB_8888 holds in memory, so the rows go in as they are.
+        return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888).also { it.copyPixelsFromBuffer(buffer) }
+    }
+
     override fun close() {
         if (closed) return
         closed = true
+        pixels = null
         runCatching { KernkraftPdf.callNative(Native.Close, handleRequest()) }
     }
 
@@ -158,7 +239,14 @@ class KernkraftSession private constructor(
             val lines = answer.getJSONArray("lines")
             return (0 until lines.length()).map { lines.getJSONObject(it) }
                 .filter { it.getString("text").isNotBlank() }
-                .map { PdfTextLineBox(it.getString("text"), box(it.getJSONArray("rect"))) }
+                .map {
+                    val glyphs = it.optJSONArray("glyphs")
+                    PdfTextLineBox(
+                        it.getString("text"),
+                        box(it.getJSONArray("rect")),
+                        if (glyphs == null) emptyList() else boxes(glyphs),
+                    )
+                }
         }
 
         internal fun parseMatches(answer: JSONObject): List<PdfFoundText> {

@@ -71,7 +71,7 @@ object KernkraftPdf {
     }
 
     /** The session natives, named as in [dispatch]. */
-    internal enum class Native { Open, Close, Text, Search, Links, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact }
+    internal enum class Native { Open, Close, Text, Search, Links, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact, RenderSize }
 
     /**
      * Sends [request] to [native] and returns the engine's answer, or throws a
@@ -82,6 +82,20 @@ object KernkraftPdf {
         if (!available) throw PdfEngineException(null, "PDF engine ($LIBRARY_FILE) is not bundled in this build.")
         val answer = try {
             JSONObject(dispatch(native, request.toString()))
+        } catch (e: org.json.JSONException) {
+            throw PdfEngineException(null, e.message ?: "The PDF engine gave an unreadable answer.")
+        }
+        return answerOrThrow(answer)
+    }
+
+    /**
+     * Draws a page into [pixels], a direct buffer the size `RenderSize` answered for the same request,
+     * as straight RGBA8 rows from the top. Throws like [callNative].
+     */
+    internal fun callRender(request: JSONObject, pixels: java.nio.ByteBuffer): JSONObject {
+        if (!available) throw PdfEngineException(null, "PDF engine ($LIBRARY_FILE) is not bundled in this build.")
+        val answer = try {
+            JSONObject(nativeRender(request.toString(), pixels))
         } catch (e: org.json.JSONException) {
             throw PdfEngineException(null, e.message ?: "The PDF engine gave an unreadable answer.")
         }
@@ -107,6 +121,7 @@ object KernkraftPdf {
         Native.AppendSince -> nativeAppendSince(request)
         Native.ConfirmAppended -> nativeConfirmAppended(request)
         Native.Compact -> nativeCompact(request)
+        Native.RenderSize -> nativeRenderSize(request)
     }
 
     @JvmStatic private external fun nativeMerge(request: String): String
@@ -134,6 +149,10 @@ object KernkraftPdf {
     @JvmStatic private external fun nativeConfirmAppended(request: String): String
 
     @JvmStatic private external fun nativeCompact(request: String): String
+
+    @JvmStatic private external fun nativeRenderSize(request: String): String
+
+    @JvmStatic private external fun nativeRender(request: String, pixels: java.nio.ByteBuffer): String
 
     private const val LIBRARY = "kernkraft_jni"
     private const val LIBRARY_FILE = "lib$LIBRARY.so"

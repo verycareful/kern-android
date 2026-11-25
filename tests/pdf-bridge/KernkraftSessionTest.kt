@@ -123,4 +123,54 @@ class KernkraftSessionTest {
         assertEquals("https://example.org", (links[0] as PdfEngineLink.Uri).uri)
         assertEquals(2, (links[1] as PdfEngineLink.Page).page)
     }
+
+    @Test
+    fun a_line_keeps_its_glyph_boxes_in_the_order_given() {
+        val lines = KernkraftSession.parseLines(
+            JSONObject(
+                """{"ok":true,"revision":0,"tagged":false,"blocks":[],"lines":[
+                    {"block":0,"text":"ab","rect":[0.1,0.2,0.3,0.25],"glyphs":[[0.2,0.2,0.3,0.25],[0.1,0.2,0.2,0.25]]}]}""",
+            ),
+        )
+        assertEquals(listOf(PdfBox(0.2f, 0.2f, 0.3f, 0.25f), PdfBox(0.1f, 0.2f, 0.2f, 0.25f)), lines[0].glyphs)
+    }
+
+    @Test
+    fun a_markup_is_sent_with_its_page_from_one_its_kind_and_its_boxes() {
+        val json = PdfOp.AddMarkup(
+            kind = MarkupKind.StrikeOut,
+            page = 2,
+            quads = listOf(PdfBox(0.1f, 0.2f, 0.5f, 0.25f)),
+            colour = PdfColour(1.0, 0.5, 0.0),
+            modified = "D:20261125120000+00'00'",
+        ).toJson()
+        assertEquals("addMarkup", json.getString("op"))
+        assertEquals("strikeOut", json.getString("kind"))
+        assertEquals(3, json.getInt("page"))
+        assertEquals(1, json.getJSONArray("quads").length())
+        assertEquals(4, json.getJSONArray("quads").getJSONArray(0).length())
+        assertEquals(0.5, json.getJSONArray("quads").getJSONArray(0).getDouble(2), 1e-6)
+        assertEquals("[1,0.5,0]", json.getJSONArray("colour").toString())
+        assertEquals("D:20261125120000+00'00'", json.getString("modified"))
+    }
+
+    @Test
+    fun every_markup_kind_has_the_name_the_engine_reads() {
+        assertEquals(listOf("highlight", "underline", "strikeOut"), MarkupKind.entries.map { it.wire })
+    }
+
+    @Test
+    fun an_ink_is_sent_with_each_stroke_as_pairs_and_the_width_in_points() {
+        val json = PdfOp.AddInk(
+            page = 0,
+            strokes = listOf(listOf(PdfPoint(0.1, 0.2), PdfPoint(0.3, 0.4)), listOf(PdfPoint(0.5, 0.5))),
+            widthPoints = 3.0,
+            colour = PdfColour(0.0, 0.0, 0.0),
+            modified = "D:20261125120000+00'00'",
+        ).toJson()
+        assertEquals("addInk", json.getString("op"))
+        assertEquals(1, json.getInt("page"))
+        assertEquals("[[[0.1,0.2],[0.3,0.4]],[[0.5,0.5]]]", json.getJSONArray("strokes").toString())
+        assertEquals(3.0, json.getDouble("width"), 0.0)
+    }
 }

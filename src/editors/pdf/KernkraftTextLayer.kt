@@ -20,7 +20,7 @@ class KernkraftTextLayer(
         withContext(dispatcher) { engine.search(page, query) }.map { PdfTextMatch(page, it.boxes.map(::pageRect)) }
 
     override suspend fun lines(page: Int): List<PdfTextLine> =
-        withContext(dispatcher) { engine.lines(page) }.map { PdfTextLine(it.text, pageRect(it.box)) }
+        withContext(dispatcher) { engine.lines(page) }.map { PdfTextLine(it.text, pageRect(it.box), it.glyphs.map(::pageRect)) }
 
     override suspend fun links(page: Int): List<PdfLink> =
         withContext(dispatcher) { engine.links(page) }.map {

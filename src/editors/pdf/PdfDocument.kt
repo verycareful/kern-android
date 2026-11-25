@@ -45,6 +45,9 @@ class PdfDocument private constructor(
         }
     }
 
+    /** The width of [index] as displayed, in PDF points (1/72 inch). */
+    fun pageWidthPoints(index: Int): Int = synchronized(lock) { renderer.openPage(index).use { it.width } }
+
     override fun close() {
         synchronized(lock) {
             runCatching { renderer.close() }

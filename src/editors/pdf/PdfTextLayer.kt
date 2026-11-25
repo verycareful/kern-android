@@ -12,8 +12,11 @@ data class PagePoint(val x: Float, val y: Float)
 /** One match of a search: the page it is on and the boxes covering its text (one per line it spans). */
 data class PdfTextMatch(val page: Int, val rects: List<PageRect>)
 
-/** One line of a page's text and the box it is drawn in. */
-data class PdfTextLine(val text: String, val rect: PageRect)
+/**
+ * One line of a page's text and the box it is drawn in. [glyphs] are the boxes of its glyphs in
+ * logical order (not left to right); markup is made from them.
+ */
+data class PdfTextLine(val text: String, val rect: PageRect, val glyphs: List<PageRect> = emptyList())
 
 /** A link on a page: the boxes that take a tap, and where it goes. */
 sealed interface PdfLink {

@@ -12,9 +12,13 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.kern.pdfbridge.KernkraftPdf
+import dev.kern.pdfbridge.MarkupKind
+import dev.kern.pdfbridge.PdfBox
+import dev.kern.pdfbridge.PdfColour
 import dev.kern.pdfbridge.PdfDate
 import dev.kern.pdfbridge.PdfEngineException
 import dev.kern.pdfbridge.PdfOp
+import dev.kern.pdfbridge.PdfPoint
 import dev.kern.pdfbridge.PdfStep
 import dev.kern.shared.find.FindMessage
 import dev.kern.shared.find.FindState
@@ -30,6 +34,7 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -155,6 +160,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 if (query.isEmpty() || layer == null) return@collectLatest
                 delay(SEARCH_DEBOUNCE_MS)
                 find.message = SEARCHING
+                var unreadable = 0
                 val found = (0 until pageCount).flatMap { page ->
                     ensureActive()
                     try {
@@ -162,11 +168,12 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
+                        unreadable++
                         emptyList()
                     }
                 }
                 pdfMatches = found
-                if (find.message == SEARCHING) find.message = null
+                if (find.message == SEARCHING) find.message = if (unreadable > 0) unreadPagesMessage(unreadable) else null
                 find.reveal()
             }
         }
@@ -258,11 +265,145 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         handle(gate.request(op))
     }
 
+    // --- Markup and ink -------------------------------------------------------------
+
+    /** What a touch on a page does: scroll and select as usual, mark text, or draw. */
+    enum class AnnotateMode { None, Markup, Ink }
+
+    var annotateMode by mutableStateOf(AnnotateMode.None)
+        private set
+    var markupKind by mutableStateOf(MarkupKind.Highlight)
+        private set
+    var markColour by mutableStateOf(MarkColour.Yellow)
+        private set
+
+    /** The pen's colour, kept apart from the marker's: black ink and yellow highlight are the usual pair. */
+    var inkColour by mutableStateOf(MarkColour.Black)
+        private set
+
+    /** The colour the bar shows as chosen: the pen's while drawing, the marker's otherwise. */
+    val activeColour: MarkColour get() = if (annotateMode == AnnotateMode.Ink) inkColour else markColour
+    var inkWidth by mutableStateOf(InkWidth.Medium)
+        private set
+
+    /** The text chosen to be marked, waiting for the user to apply it. */
+    var markupSelection by mutableStateOf<MarkupSelection?>(null)
+        private set
+
+    fun startMarkup() = enter(AnnotateMode.Markup)
+
+    fun startInk() = enter(AnnotateMode.Ink)
+
+    fun finishAnnotating() = enter(AnnotateMode.None)
+
+    private fun enter(mode: AnnotateMode) {
+        annotateMode = mode
+        markupSelection = null
+    }
+
+    fun chooseMarkupKind(kind: MarkupKind) { markupKind = kind }
+
+    fun chooseColour(colour: MarkColour) {
+        if (annotateMode == AnnotateMode.Ink) inkColour = colour else markColour = colour
+    }
+
+    fun chooseInkWidth(width: InkWidth) { inkWidth = width }
+
+    fun selectMarkup(selection: MarkupSelection?) { markupSelection = selection }
+
+    /** The glyphs of [page], for choosing text to mark. */
+    suspend fun pageGlyphs(page: Int): PageGlyphs = PageGlyphs.of(pageLines(page))
+
+    /** Marks the chosen text with the chosen kind and colour. */
+    fun applyMarkup() {
+        val selection = markupSelection ?: return
+        viewModelScope.launch {
+            val quads = selection.quads(pageGlyphs(selection.page))
+            if (quads.isEmpty()) return@launch
+            requestEdit(
+                PdfOp.AddMarkup(
+                    kind = markupKind,
+                    page = selection.page,
+                    quads = quads.map { PdfBox(it.left, it.top, it.right, it.bottom) },
+                    colour = markColour.toEngine(),
+                    modified = PdfDate.now(),
+                ),
+            )
+        }
+    }
+
+    /** Strokes drawn on [page] that are not in the document yet; they stay on screen until they are. */
+    data class PendingInk(val page: Int, val strokes: List<List<PagePoint>>, val pageAspect: Float)
+
+    var pendingInk by mutableStateOf<List<PendingInk>>(emptyList())
+        private set
+
+    /** The pending ink the running or waiting edit holds. */
+    private var inkSent: PendingInk? = null
+
+    /**
+     * Adds a [stroke] drawn on [page] (whose height over width is [pageAspect]). It is one ink
+     * annotation, one undo step. A stroke drawn while an edit runs, or while the first-edit warning
+     * waits, stays on screen and goes in right after that edit as an edit of its own; strokes that
+     * wait together on one page go in as one.
+     */
+    fun addInkStroke(page: Int, stroke: List<PagePoint>, pageAspect: Float) {
+        if (stroke.isEmpty()) return
+        val at = pendingInk.indexOfFirst { it.page == page }
+        pendingInk = if (at < 0) {
+            pendingInk + PendingInk(page, listOf(stroke), pageAspect)
+        } else {
+            pendingInk.toMutableList().also { it[at] = it[at].copy(strokes = it[at].strokes + listOf(stroke)) }
+        }
+        sendInk()
+    }
+
+    private fun sendInk() {
+        if (editBusy || inkSent != null || loading || error != null) return
+        val entry = pendingInk.firstOrNull() ?: return
+        val strokes = entry.strokes.map { InkStroke.smooth(it, entry.pageAspect) }.filter { it.isNotEmpty() }
+        inkSent = entry
+        requestEdit(
+            PdfOp.AddInk(
+                page = entry.page,
+                strokes = strokes.map { stroke -> stroke.map { PdfPoint(it.x.toDouble(), it.y.toDouble()) } },
+                widthPoints = inkWidth.points,
+                colour = inkColour.toEngine(),
+                modified = PdfDate.now(),
+            ),
+        )
+        // requestEdit has said why when there is no engine; the strokes cannot go anywhere.
+        if (!KernkraftPdf.available) dropPendingInk()
+    }
+
+    /** The ink of the edit that just went in is in the document: take it off the pending list. */
+    private fun inkAdopted() {
+        val sent = inkSent ?: return
+        inkSent = null
+        pendingInk = pendingInk.mapNotNull { entry ->
+            if (entry.page != sent.page) entry
+            else entry.copy(strokes = entry.strokes.drop(sent.strokes.size)).takeIf { it.strokes.isNotEmpty() }
+        }
+    }
+
+    private fun dropPendingInk() {
+        inkSent = null
+        pendingInk = emptyList()
+    }
+
+    /** The width of [page] in PDF points, which the width of the pen is measured in; null when it cannot be read. */
+    suspend fun pageWidthPoints(page: Int): Int? = withContext(Dispatchers.IO) { document?.let { runCatching { it.pageWidthPoints(page) }.getOrNull() } }
+
+    private fun MarkColour.toEngine() = PdfColour(red, green, blue)
+
     fun chooseCopyFirst() = handle(gate.chooseCopy())
 
     fun editWithoutCopy() = handle(gate.chooseWithoutCopy())
 
-    fun cancelEdit() = gate.cancel()
+    fun cancelEdit() {
+        gate.cancel()
+        dropPendingInk()
+    }
 
     /** The save picker answered for the untouched copy: [target] is where it goes, or null when it was closed. */
     fun copyPicked(target: Uri?) {
@@ -341,6 +482,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
             result.onSuccess { (step, doc) -> adopt(step, doc) }
                 .onFailure { editFailed(it) }
             editBusy = false
+            sendInk()
         }
     }
 
@@ -354,6 +496,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         val countChanged = step.pageCount != pageCount
         document = doc
         pageCount = step.pageCount
+        markupSelection = null
+        inkAdopted()
         textRevision++
         publishText()
         dirty = step.modified
@@ -375,6 +519,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     /** An edit failed: say why, and put the last good picture back if the failure took it away. */
     private suspend fun editFailed(failure: Throwable) {
+        dropPendingInk()
         toolError = when {
             failure is PdfEngineException && failure.needsCompactedCopy ->
                 "This PDF had to be repaired to be read, so Kern cannot edit it in place. ${failure.message}"
@@ -520,8 +665,22 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
-    /** Renders [index] at [widthPx] off the main thread, or null if the doc is closed. */
+    /**
+     * Renders [index] at [widthPx] off the main thread. The engine draws every page, so a page looks
+     * the same before and after it is marked and every annotation in the file is seen; the picture
+     * waits for the engine session to open. Only when the engine cannot open the file at all does the
+     * framework renderer draw it (the find bar says the engine is unavailable). Null if the doc is closed.
+     */
     suspend fun renderPage(index: Int, widthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
+        snapshotFlow { textLayer != null || textFailure != null }.first { it }
+        val open = session
+        if (open != null) {
+            return@withContext runCatching { withContext(sessionDispatcher) { open.render(index, widthPx) } }.getOrNull()
+        }
+        renderWithFramework(index, widthPx)
+    }
+
+    private suspend fun renderWithFramework(index: Int, widthPx: Int): Bitmap? {
         val deadline = System.currentTimeMillis() + RENDER_WAIT_MS
         while (System.currentTimeMillis() < deadline) {
             // While an edit swaps the document there is none for a moment: wait for the next one
@@ -529,10 +688,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
             val doc = document
             if (doc == null) { delay(RENDER_RETRY_MS); continue }
             val bitmap = runCatching { doc.renderPage(index, widthPx) }.getOrNull()
-            if (bitmap != null) return@withContext bitmap
-            if (document === doc) return@withContext null
+            if (bitmap != null) return bitmap
+            if (document === doc) return null
         }
-        null
+        return null
     }
 
     /** Writes a copy of the document as it stands, edits included, to [target]. */
@@ -606,6 +765,13 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
         private val SEARCHING = FindMessage("Searching", isError = false)
         private const val PREPARING_TEXT = "Getting the text ready"
+
+        /** What find says when [count] pages could not be read, so the matches shown may be incomplete. */
+        internal fun unreadPagesMessage(count: Int) = FindMessage(
+            if (count == 1) "Could not read the text of 1 page, so it was not searched"
+            else "Could not read the text of $count pages, so they were not searched",
+            isError = true,
+        )
 
         /** One 1-based page range: "4" or "2-7", after whitespace has been stripped. */
         private val SINGLE_RANGE = Regex("""(\d{1,6})(?:-(\d{1,6}))?""")

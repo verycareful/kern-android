@@ -1,5 +1,6 @@
 package dev.kern.editors.pdf
 
+import android.graphics.Bitmap
 import dev.kern.pdfbridge.KernkraftSession
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfStep
@@ -78,6 +79,9 @@ class PdfEditSession private constructor(
 
     /** The text of the document as it stands, read through the engine; its calls run on [dispatcher]. */
     fun textLayer(dispatcher: CoroutineDispatcher): PdfTextLayer = KernkraftTextLayer(engine, dispatcher)
+
+    /** [page] (0-based) of the document as it stands, [widthPx] wide, drawn by the engine with its annotations. */
+    fun render(page: Int, widthPx: Int): Bitmap = engine.render(page, widthPx)
 
     /** Writes the document as it stands as a new compacted file in the session folder and gives that file back. */
     fun compact(): File {
