@@ -70,9 +70,61 @@ object KernkraftPdf {
         return Result.Success(List(paths?.length() ?: 0) { paths!!.getString(it) })
     }
 
+    /** The session natives, named as in [dispatch]. */
+    internal enum class Native { Open, Close, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact }
+
+    /**
+     * Sends [request] to [native] and returns the engine's answer, or throws a
+     * [PdfEngineException] when it says `ok:false`, when the library is not bundled, or when the
+     * answer is not JSON.
+     */
+    internal fun callNative(native: Native, request: JSONObject): JSONObject {
+        if (!available) throw PdfEngineException(null, "PDF engine ($LIBRARY_FILE) is not bundled in this build.")
+        val answer = try {
+            JSONObject(dispatch(native, request.toString()))
+        } catch (e: org.json.JSONException) {
+            throw PdfEngineException(null, e.message ?: "The PDF engine gave an unreadable answer.")
+        }
+        return answerOrThrow(answer)
+    }
+
+    internal fun answerOrThrow(answer: JSONObject): JSONObject {
+        if (answer.optBoolean("ok", false)) return answer
+        val kind = answer.optString("kind").takeIf { it.isNotEmpty() }
+        val message = answer.optString("message").takeIf { it.isNotEmpty() }
+        throw PdfEngineException(kind, message ?: kind ?: "Unknown error")
+    }
+
+    private fun dispatch(native: Native, request: String): String = when (native) {
+        Native.Open -> nativeOpen(request)
+        Native.Close -> nativeClose(request)
+        Native.Apply -> nativeApply(request)
+        Native.Undo -> nativeUndo(request)
+        Native.Redo -> nativeRedo(request)
+        Native.AppendSince -> nativeAppendSince(request)
+        Native.ConfirmAppended -> nativeConfirmAppended(request)
+        Native.Compact -> nativeCompact(request)
+    }
+
     @JvmStatic private external fun nativeMerge(request: String): String
 
     @JvmStatic private external fun nativeExtract(request: String): String
+
+    @JvmStatic private external fun nativeOpen(request: String): String
+
+    @JvmStatic private external fun nativeClose(request: String): String
+
+    @JvmStatic private external fun nativeApply(request: String): String
+
+    @JvmStatic private external fun nativeUndo(request: String): String
+
+    @JvmStatic private external fun nativeRedo(request: String): String
+
+    @JvmStatic private external fun nativeAppendSince(request: String): String
+
+    @JvmStatic private external fun nativeConfirmAppended(request: String): String
+
+    @JvmStatic private external fun nativeCompact(request: String): String
 
     private const val LIBRARY = "kernkraft_jni"
     private const val LIBRARY_FILE = "lib$LIBRARY.so"

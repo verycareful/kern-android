@@ -40,6 +40,8 @@ import kotlinx.coroutines.launch
  * @param toolbar optional bottom toolbar (e.g. an [EditorToolbar]).
  * @param find the editor's side of find and replace: adds the magnifier left of Save and
  *        the [FindBar] under the top bar.
+ * @param showFindButton whether the magnifier is shown; an editor that opens find from its own
+ *        menu hides it and keeps the [FindBar].
  * @param content rendered only once loaded; receives a Modifier carrying the
  *        scaffold inset padding to use as its root.
  */
@@ -57,6 +59,7 @@ fun EditorChrome(
     onExportToUri: (Uri, onResult: (Boolean, String?) -> Unit) -> Unit,
     toolbar: (@Composable () -> Unit)? = null,
     find: FindTarget? = null,
+    showFindButton: Boolean = true,
     extraActions: (@Composable () -> Unit)? = null,
     content: @Composable (Modifier) -> Unit,
 ) {
@@ -92,7 +95,7 @@ fun EditorChrome(
                 onBack = { backDispatcher?.onBackPressed() },
                 actions = {
                     extraActions?.invoke()
-                    find?.let { FindButton(it) }
+                    if (showFindButton) find?.let { FindButton(it) }
                     KernIconButton(
                         KernIcons.Save,
                         "Save",

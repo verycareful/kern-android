@@ -11,6 +11,7 @@ import android.os.Build
 import android.os.ParcelFileDescriptor
 import androidx.annotation.RequiresApi
 import java.io.Closeable
+import java.io.File
 import java.io.IOException
 import kotlin.math.roundToInt
 
@@ -96,6 +97,17 @@ class PdfDocument private constructor(
     }
 
     companion object {
+        /** Opens the PDF in [file] for reading. Throws [IOException] if it can't be opened. */
+        fun open(file: File): PdfDocument {
+            val pfd = ParcelFileDescriptor.open(file, ParcelFileDescriptor.MODE_READ_ONLY)
+            return try {
+                PdfDocument(pfd, PdfRenderer(pfd))
+            } catch (t: Throwable) {
+                runCatching { pfd.close() }
+                throw t
+            }
+        }
+
         /** Opens the PDF at [uri] for reading. Throws [IOException] if it can't be opened. */
         fun open(context: Context, uri: Uri): PdfDocument {
             val pfd = context.contentResolver.openFileDescriptor(uri, "r")

@@ -5,24 +5,35 @@ import android.graphics.Bitmap
 import android.net.Uri
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import dev.kern.pdfbridge.KernkraftPdf
+import dev.kern.pdfbridge.PdfDate
+import dev.kern.pdfbridge.PdfEngineException
+import dev.kern.pdfbridge.PdfOp
+import dev.kern.pdfbridge.PdfStep
 import dev.kern.shared.find.FindMessage
 import dev.kern.shared.find.FindState
 import dev.kern.shared.find.FindTarget
 import dev.kern.shared.io.DocumentIo
 import dev.kern.shared.ui.ExternalLinks
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.DelicateCoroutinesApi
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
+import java.io.IOException
+import java.util.UUID
 
 /**
  * PDF viewer state: opens a PDF and pages through it read-only via the framework
@@ -41,7 +52,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         private set
 
     private var uri: Uri? = null
-    private var document: PdfDocument? = null
+    @Volatile private var document: PdfDocument? = null
     private var started = false
 
     // Find
@@ -134,6 +145,272 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
+    // --- Editing -------------------------------------------------------------------
+    // The edit session starts at the first edit, after the warning: a PDF that is only read is
+    // read from where it is, without a copy.
+
+    /** Whether there are edits not yet saved into the file. */
+    var dirty by mutableStateOf(false)
+        private set
+    var canUndo by mutableStateOf(false)
+        private set
+    var canRedo by mutableStateOf(false)
+        private set
+
+    /** True while an edit, undo, redo or save is running. */
+    var editBusy by mutableStateOf(false)
+        private set
+
+    /** Bumped when the page count changes: every page picture is out of date. */
+    var documentEpoch by mutableIntStateOf(0)
+        private set
+
+    private val pageVersions = mutableStateMapOf<Int, Int>()
+
+    /** Changes whenever the picture of [index] does, for the page view to draw again. */
+    fun pageVersion(index: Int): Int = pageVersions[index] ?: 0
+
+    private val gate = FirstEditGate<PdfOp> {
+        OriginalCopy.plan(fileName, uri?.let(DocumentIo::localFile))
+    }
+
+    /** The dialog that asks before the first edit, or null. */
+    val editWarning: EditWarning? get() = gate.warning
+
+    /** The name the system save picker suggests for the untouched copy, while the screen should show it. */
+    var copyPickerRequest by mutableStateOf<String?>(null)
+        private set
+
+    private var session: PdfEditSession? = null
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val sessionDispatcher: CoroutineDispatcher = Dispatchers.IO.limitedParallelism(1)
+
+    private val sessionDir: File by lazy {
+        File(File(getApplication<Application>().cacheDir, "pdf-session"), UUID.randomUUID().toString())
+    }
+
+    /** Asks for [op] to be applied. The first edit of an open PDF waits for the warning. */
+    fun requestEdit(op: PdfOp) {
+        if (editBusy || loading || error != null) return
+        if (!KernkraftPdf.available) {
+            toolError = "The PDF engine is not bundled in this build, so this PDF cannot be edited."
+            return
+        }
+        handle(gate.request(op))
+    }
+
+    fun chooseCopyFirst() = handle(gate.chooseCopy())
+
+    fun editWithoutCopy() = handle(gate.chooseWithoutCopy())
+
+    fun cancelEdit() = gate.cancel()
+
+    /** The save picker answered for the untouched copy: [target] is where it goes, or null when it was closed. */
+    fun copyPicked(target: Uri?) {
+        copyPickerRequest = null
+        if (target == null) { gate.pickerCancelled(); return }
+        val source = uri ?: return
+        val ctx = getApplication<Application>()
+        runCopy(
+            write = {
+                ContentDocumentTarget.forUri(ctx, source).openRead().use { input ->
+                    (ctx.contentResolver.openOutputStream(target, "wt") ?: throw IOException("Could not open $target for writing"))
+                        .use { input.copyTo(it) }
+                }
+            },
+            onFailure = { gate.pickerCancelled() },
+        )
+    }
+
+    fun undo() {
+        if (canUndo) launchEdit { s -> s.undo(::releaseDocument) }
+    }
+
+    fun redo() {
+        if (canRedo) launchEdit { s -> s.redo(::releaseDocument) }
+    }
+
+    private fun handle(action: FirstEditGate.Action<PdfOp>) {
+        when (action) {
+            is FirstEditGate.Action.Run -> launchEdit { s -> s.apply(action.edit, ::releaseDocument) }
+            is FirstEditGate.Action.CopyNextToFile -> writeCopyNextToFile(action.destination)
+            is FirstEditGate.Action.OpenPicker -> copyPickerRequest = action.suggestedName
+            FirstEditGate.Action.Wait -> Unit
+        }
+    }
+
+    private fun writeCopyNextToFile(destination: CopyDestination.NextToFile) {
+        val source = uri ?: return
+        val ctx = getApplication<Application>()
+        runCopy(
+            write = {
+                OriginalCopy.write(destination.directory, OriginalCopy.stem(fileName)) {
+                    ContentDocumentTarget.forUri(ctx, source).openRead()
+                }
+            },
+            onFailure = { gate.copyFailed(it) },
+        )
+    }
+
+    /** Runs [write] off the main thread; on success the edit that waits goes ahead, on failure it never does. */
+    private fun runCopy(write: () -> Unit, onFailure: (reason: String) -> Unit) {
+        editBusy = true
+        viewModelScope.launch {
+            val result = withContext(Dispatchers.IO) { runCatching(write) }
+            editBusy = false
+            result.onSuccess { handle(gate.copyDone()) }
+                .onFailure { onFailure(it.message ?: "The copy could not be written.") }
+        }
+    }
+
+    /**
+     * Runs [action] on the edit session, which is started if this is the first edit, and shows the
+     * document it leaves. Everything touching the session's files happens on [sessionDispatcher].
+     */
+    private fun launchEdit(action: (PdfEditSession) -> PdfStep) {
+        if (editBusy) return
+        val source = uri ?: return
+        val ctx = getApplication<Application>()
+        editBusy = true
+        viewModelScope.launch {
+            val result = withContext(sessionDispatcher) {
+                runCatching {
+                    val s = session ?: PdfEditSession.create(sessionDir, ContentDocumentTarget.forUri(ctx, source), PdfDate::now)
+                        .also { session = it }
+                    val step = action(s)
+                    step to PdfDocument.open(s.viewFile)
+                }
+            }
+            result.onSuccess { (step, doc) -> adopt(step, doc) }
+                .onFailure { editFailed(it) }
+            editBusy = false
+        }
+    }
+
+    private fun releaseDocument() {
+        document?.close()
+        document = null
+    }
+
+    /** Shows [doc], the document after [step], and drops what was read from the pages it changed. */
+    private fun adopt(step: PdfStep, doc: PdfDocument) {
+        val countChanged = step.pageCount != pageCount
+        document = doc
+        pageCount = step.pageCount
+        textLayer = doc.textLayer
+        dirty = step.modified
+        canUndo = step.canUndo
+        canRedo = step.canRedo
+        if (countChanged) {
+            lineCache.clear()
+            linkCache.clear()
+            pageVersions.clear()
+            documentEpoch++
+        } else {
+            for (page in step.changedPages) {
+                lineCache.remove(page)
+                linkCache.remove(page)
+                pageVersions[page] = pageVersion(page) + 1
+            }
+        }
+    }
+
+    /** An edit failed: say why, and put the last good picture back if the failure took it away. */
+    private suspend fun editFailed(failure: Throwable) {
+        toolError = when {
+            failure is PdfEngineException && failure.needsCompactedCopy ->
+                "This PDF had to be repaired to be read, so Kern cannot edit it in place. ${failure.message}"
+            else -> failure.message ?: "The edit failed."
+        }
+        val open = session
+        if (document == null && open != null) {
+            runCatching { withContext(sessionDispatcher) { PdfDocument.open(open.viewFile) } }
+                .onSuccess { document = it; textLayer = it.textLayer }
+        }
+        open?.let { dirty = it.step.modified; canUndo = it.step.canUndo; canRedo = it.step.canRedo }
+    }
+
+    /** Appends the edits to the file. [onResult] gets whether it worked, and why not when it did not. */
+    fun save(onResult: (ok: Boolean, message: String?) -> Unit) {
+        val open = session
+        if (open == null || !dirty) { onResult(true, null); return }
+        if (editBusy) { onResult(false, "Wait for the edit in progress to finish."); return }
+        editBusy = true
+        viewModelScope.launch {
+            val outcome = withContext(sessionDispatcher) {
+                runCatching {
+                    val saved = open.save(::releaseDocument)
+                    val doc = if (document == null) PdfDocument.open(open.viewFile) else null
+                    saved to doc
+                }
+            }
+            outcome.onSuccess { (result, doc) ->
+                if (doc != null) { document = doc; textLayer = doc.textLayer }
+                reportSave(result, onResult)
+            }.onFailure {
+                runCatching { withContext(sessionDispatcher) { PdfDocument.open(open.viewFile) } }
+                    .onSuccess { document = it; textLayer = it.textLayer }
+                onResult(false, it.message ?: "Saving failed.")
+            }
+            editBusy = false
+        }
+    }
+
+    private fun reportSave(result: PdfEditSession.SaveOutcome, onResult: (Boolean, String?) -> Unit) {
+        when (result) {
+            is PdfEditSession.SaveOutcome.Saved -> {
+                dirty = false
+                for (page in 0 until pageCount) pageVersions[page] = pageVersion(page) + 1
+                onResult(true, null)
+            }
+            PdfEditSession.SaveOutcome.NothingToSave -> { dirty = false; onResult(true, null) }
+            PdfEditSession.SaveOutcome.ChangedOutside -> onResult(
+                false,
+                "This PDF changed outside Kern since you opened it, so saving would overwrite those changes. " +
+                    "Use Export to keep your version as a separate file.",
+            )
+            is PdfEditSession.SaveOutcome.Failed -> onResult(
+                false,
+                "${result.message} Use Export to keep your version as a separate file.",
+            )
+            is PdfEditSession.SaveOutcome.Damaged -> onResult(
+                false,
+                "${result.message} Export your version now, then check the original file.",
+            )
+        }
+    }
+
+    /** The document as it stands, compacted, as a new file at [target]; the original is not touched. */
+    fun saveCompactedTo(target: Uri) {
+        val source = uri ?: return
+        if (editBusy) return
+        if (!KernkraftPdf.available) {
+            toolError = "The PDF engine is not bundled in this build."
+            return
+        }
+        val ctx = getApplication<Application>()
+        editBusy = true
+        viewModelScope.launch {
+            val result = withContext(sessionDispatcher) {
+                runCatching {
+                    val s = session ?: PdfEditSession.create(sessionDir, ContentDocumentTarget.forUri(ctx, source), PdfDate::now)
+                        .also { session = it }
+                    val compacted = s.compact()
+                    try {
+                        (ctx.contentResolver.openOutputStream(target, "wt") ?: throw IOException("Could not open $target for writing"))
+                            .use { out -> compacted.inputStream().use { it.copyTo(out) } }
+                    } finally {
+                        compacted.delete()
+                    }
+                }
+            }
+            result.onSuccess { toolMessage = "Saved a compacted copy" }
+                .onFailure { toolError = it.message ?: "The compacted copy could not be saved." }
+            editBusy = false
+        }
+    }
+
     // --- PDF tools (merge / split) state ---------------------------------------
     /** True while a bridge operation runs. */
     var toolBusy by mutableStateOf(false)
@@ -189,16 +466,31 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     /** Renders [index] at [widthPx] off the main thread, or null if the doc is closed. */
     suspend fun renderPage(index: Int, widthPx: Int): Bitmap? = withContext(Dispatchers.IO) {
-        runCatching { document?.renderPage(index, widthPx) }.getOrNull()
+        val deadline = System.currentTimeMillis() + RENDER_WAIT_MS
+        while (System.currentTimeMillis() < deadline) {
+            // While an edit swaps the document there is none for a moment: wait for the next one
+            // instead of giving the page a picture of nothing.
+            val doc = document
+            if (doc == null) { delay(RENDER_RETRY_MS); continue }
+            val bitmap = runCatching { doc.renderPage(index, widthPx) }.getOrNull()
+            if (bitmap != null) return@withContext bitmap
+            if (document === doc) return@withContext null
+        }
+        null
     }
 
-    /** Writes a verbatim copy of the original file to [target]. */
+    /** Writes a copy of the document as it stands, edits included, to [target]. */
     fun exportTo(target: Uri, onResult: (ok: Boolean, message: String?) -> Unit) {
         val ctx = getApplication<Application>()
         val source = uri ?: run { onResult(false, "Nothing to export."); return }
         viewModelScope.launch {
             val result = withContext(Dispatchers.IO) {
-                runCatching { DocumentIo.writeBytes(ctx, target, DocumentIo.readBytes(ctx, source)) }
+                runCatching {
+                    // The edited state is read where the session's files are only ever touched: on the
+                    // session's own thread, so a rebuild of the view cannot be caught half way.
+                    val edited = withContext(sessionDispatcher) { session?.viewFile?.readBytes() }
+                    DocumentIo.writeBytes(ctx, target, edited ?: DocumentIo.readBytes(ctx, source))
+                }
             }
             onResult(result.isSuccess, result.exceptionOrNull()?.message)
         }
@@ -249,6 +541,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     }
 
     companion object {
+        /** How long a page waits for the document an edit is swapping in. */
+        private const val RENDER_WAIT_MS = 5_000L
+        private const val RENDER_RETRY_MS = 20L
+
         /** How long typing must pause before a PDF search starts. */
         private const val SEARCH_DEBOUNCE_MS = 250L
 
@@ -417,6 +713,13 @@ paths.size > 1 -> toolError =
     override fun onCleared() {
         document?.close()
         document = null
+        // The session is closed on its own thread, behind any save or edit still running there: closing
+        // it earlier would delete the files such a save may need to put the document back.
+        @OptIn(DelicateCoroutinesApi::class)
+        GlobalScope.launch(sessionDispatcher) {
+            session?.let { runCatching { it.close() } }
+            session = null
+        }
         // Backstop: leaving the editor must not leave copies of the user's
         // documents behind. viewModelScope is cancelled by now, so this runs on a
         // plain background thread rather than blocking the main one.
