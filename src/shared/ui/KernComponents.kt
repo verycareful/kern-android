@@ -314,7 +314,8 @@ fun KernTopBar(
                         },
                         color = colors.text,
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
+                        softWrap = false,
+                        modifier = Modifier.weight(1f, fill = false).horizontalScroll(rememberScrollState()),
                     )
                 }
                 if (subtitle != null) {

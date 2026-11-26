@@ -196,7 +196,7 @@ private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCo
             containerColor = colors.surface,
         ) {
             ActionRow("Find", KernIcons.Search) { expanded = false; vm.find.open() }
-            ActionRow("Highlight text", KernIcons.Highlight, enabled = vm.canSelectText && !vm.editBusy) {
+            ActionRow("Mark up text", KernIcons.Highlight, enabled = vm.canSelectText && !vm.editBusy) {
                 expanded = false
                 vm.startMarkup()
             }

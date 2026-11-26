@@ -10,7 +10,6 @@ import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.drag
 import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
@@ -42,6 +41,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import dev.kern.pdfbridge.MarkupKind
 import dev.kern.shared.theme.KernRadius
@@ -172,19 +172,19 @@ internal fun MarkupLayer(vm: PdfEditorViewModel, page: Int, lines: List<PdfTextL
     val markColour = vm.markColour
     val kind = vm.markupKind
     val density = LocalDensity.current
-    BoxWithConstraints(modifier) {
-        val width = constraints.maxWidth.toFloat()
-        val height = constraints.maxHeight.toFloat()
-        val aspect = if (width > 0f) height / width else 1f
-        fun point(o: Offset) = PagePoint(o.x / width, o.y / height)
-
+    Box(modifier) {
         val handleDrop = with(density) { HandleDrop.toPx() }
         val handleGrab = with(density) { HandleGrab.toPx() }
 
+        // A gesture's coroutine outlives the composition that started it, and the layer is resized by zoom
+        // while marking is open: so every gesture reads the layer's size from [size] at the time of the touch.
+        fun IntSize.point(o: Offset) = PagePoint(o.x / width.coerceAtLeast(1), o.y / height.coerceAtLeast(1))
+        fun IntSize.aspect() = height.toFloat() / width.coerceAtLeast(1)
+
         /** The point on the text a handle marks: the left edge of the first glyph, the right edge of the last. */
-        fun anchorOf(handle: Handle, s: MarkupSelection): Offset {
+        fun anchorOf(handle: Handle, s: MarkupSelection, size: IntSize): Offset {
             val box = glyphs.boxes[if (handle == Handle.Start) s.first else s.last]
-            return Offset((if (handle == Handle.Start) box.left else box.right) * width, (box.top + box.bottom) / 2 * height)
+            return Offset((if (handle == Handle.Start) box.left else box.right) * size.width, (box.top + box.bottom) / 2 * size.height)
         }
 
         Canvas(
@@ -194,12 +194,12 @@ internal fun MarkupLayer(vm: PdfEditorViewModel, page: Int, lines: List<PdfTextL
                 .pointerInput(glyphs, page) {
                     detectDragGesturesAfterLongPress(
                         onDragStart = { start ->
-                            glyphs.hit(point(start), aspect)?.let { vm.selectMarkup(MarkupSelection(page, it, it)) }
+                            glyphs.hit(size.point(start), size.aspect())?.let { vm.selectMarkup(MarkupSelection(page, it, it)) }
                         },
                         onDrag = { change, _ ->
                             change.consume()
                             val current = vm.markupSelection?.takeIf { it.page == page } ?: return@detectDragGesturesAfterLongPress
-                            glyphs.hit(point(change.position), aspect)?.let { vm.selectMarkup(current.copy(focus = it)) }
+                            glyphs.hit(size.point(change.position), size.aspect())?.let { vm.selectMarkup(current.copy(focus = it)) }
                         },
                     )
                 }
@@ -210,16 +210,16 @@ internal fun MarkupLayer(vm: PdfEditorViewModel, page: Int, lines: List<PdfTextL
                         val current = vm.markupSelection?.takeIf { it.page == page && it.last < glyphs.boxes.size }
                             ?: return@awaitEachGesture
                         val grabbed = Handle.entries.firstOrNull { h ->
-                            val centre = anchorOf(h, current) + Offset(0f, handleDrop)
+                            val centre = anchorOf(h, current, size) + Offset(0f, handleDrop)
                             (down.position - centre).getDistance() <= handleGrab
                         } ?: return@awaitEachGesture
                         down.consume()
-                        val grabOffset = anchorOf(grabbed, current) - down.position
+                        val grabOffset = anchorOf(grabbed, current, size) - down.position
                         drag(down.id) { change ->
                             change.consume()
                             val target = change.position + grabOffset
                             val latest = vm.markupSelection?.takeIf { it.page == page } ?: return@drag
-                            glyphs.hit(point(target), aspect)?.let {
+                            glyphs.hit(size.point(target), size.aspect())?.let {
                                 vm.selectMarkup(if (grabbed == Handle.Start) latest.withStart(it) else latest.withEnd(it))
                             }
                         }
@@ -230,7 +230,7 @@ internal fun MarkupLayer(vm: PdfEditorViewModel, page: Int, lines: List<PdfTextL
             val mark = Color(markColour.red.toFloat(), markColour.green.toFloat(), markColour.blue.toFloat())
             for (quad in selection.quads(glyphs)) drawMark(kind, quad, mark)
             for (handle in Handle.entries) {
-                val at = anchorOf(handle, selection)
+                val at = anchorOf(handle, selection, IntSize(size.width.toInt(), size.height.toInt()))
                 val centre = at + Offset(0f, handleDrop)
                 drawLine(colors.accent, at, centre, strokeWidth = 2.dp.toPx())
                 drawCircle(colors.accent, HandleRadius.toPx(), centre)
