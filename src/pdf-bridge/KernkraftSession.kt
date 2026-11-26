@@ -84,12 +84,38 @@ data class PdfTextLineBox(val text: String, val box: PdfBox, val glyphs: List<Pd
 /**
  * A block of a page's text: the unit a text edit replaces. [id] is good only at the [PdfPageBlocks.revision]
  * it was read at. [reason] is the engine's name for what stops an edit, and is set when [editable] is false.
- * [text] is the block's lines, one per line of the page.
+ * [text] is the block's text as it is typed: a line the text wrapped at runs on into the next with a space,
+ * and a line its writer ended is followed by a line feed. [lineCount] is how many lines the page shows.
  */
-data class PdfTextBlock(val id: Int, val box: PdfBox, val editable: Boolean, val reason: String?, val text: String)
+data class PdfTextBlock(
+    val id: Int,
+    val box: PdfBox,
+    val editable: Boolean,
+    val reason: String?,
+    val text: String,
+    val lineCount: Int,
+)
 
 /** The blocks of one page, as the document stood at [revision]. */
 data class PdfPageBlocks(val revision: Long, val blocks: List<PdfTextBlock>)
+
+/**
+ * A font a page's text is set in, with the [size] (as the reader sees it, in points) and [colour] its [blocks] use;
+ * [chars] is how many characters they hold. [nearest] marks the entry whose block new text at the point asked
+ * about would follow. [colour] is null for text painted with a pattern.
+ */
+data class PdfPageFont(
+    val font: String,
+    val embedded: Boolean,
+    val size: Double,
+    val colour: PdfColour?,
+    val blocks: List<Int>,
+    val chars: Int,
+    val nearest: Boolean,
+)
+
+/** The fonts of one page, most used first, as the document stood at [revision]; [nearest] is the block new text would follow. */
+data class PdfPageFonts(val revision: Long, val fonts: List<PdfPageFont>, val nearest: Int?)
 
 /** One match of a search: the boxes covering it, one per line it spans. */
 data class PdfFoundText(val boxes: List<PdfBox>)
@@ -235,6 +261,41 @@ sealed interface PdfOp {
             }
     }
 
+    /**
+     * Puts [text] on [page] in a box whose top left corner is [at] and whose width is [width], as fractions of
+     * the page; the lines grow downward and wrap at the width. The font, size and colour are those of the
+     * nearest text block, or of block [likeBlock] read at [likeRevision]; each style field that is set replaces
+     * its part. A page with no text to follow needs the [size].
+     */
+    data class AddText(
+        val page: Int,
+        val at: PdfPoint,
+        val width: Double,
+        val text: String,
+        val likeBlock: Int? = null,
+        val likeRevision: Long? = null,
+        val family: String? = null,
+        val size: Double? = null,
+        val colour: PdfColour? = null,
+    ) : PdfOp {
+        init {
+            require((likeBlock == null) == (likeRevision == null)) { "a block to follow needs the revision it was read at" }
+        }
+
+        override fun toJson(): JSONObject = JSONObject()
+            .put("op", "addText")
+            .put("page", page + 1)
+            .put("at", JSONArray(listOf(at.x, at.y)))
+            .put("width", width)
+            .put("text", text)
+            .apply {
+                if (likeBlock != null) put("like", JSONObject().put("block", likeBlock).put("revision", likeRevision))
+                family?.let { put("family", it) }
+                size?.let { put("size", it) }
+                colour?.let { put("colour", it.toJson()) }
+            }
+    }
+
     companion object {
         internal fun oneBased(pages: List<Int>): JSONArray = JSONArray(pages.map { it + 1 })
 
@@ -307,6 +368,16 @@ class KernkraftSession private constructor(
     /** The text blocks of [page] (0-based) and the revision of the document they were read at. */
     fun textBlocks(page: Int): PdfPageBlocks =
         parseBlocks(KernkraftPdf.callNative(Native.Text, pageRequest(page)))
+
+    /**
+     * The fonts the text of [page] (0-based) is set in. With [near], the entry whose block text added at that
+     * point would follow is marked.
+     */
+    fun pageFonts(page: Int, near: PdfPoint? = null): PdfPageFonts {
+        val request = pageRequest(page)
+        near?.let { request.put("near", JSONArray(listOf(it.x, it.y))) }
+        return parsePageFonts(KernkraftPdf.callNative(Native.PageFonts, request))
+    }
 
     /** Every match of [query] on [page] (0-based): literal, ignoring case. */
     fun search(page: Int, query: String): List<PdfFoundText> =
@@ -382,10 +453,11 @@ class KernkraftSession private constructor(
 
         internal fun parseBlocks(answer: JSONObject): PdfPageBlocks {
             val lines = answer.getJSONArray("lines")
-            val textOf = HashMap<Int, MutableList<String>>()
+            val linesOf = HashMap<Int, MutableList<BlockLine>>()
             for (i in 0 until lines.length()) {
                 val line = lines.getJSONObject(i)
-                textOf.getOrPut(line.getInt("block")) { mutableListOf() }.add(line.getString("text"))
+                linesOf.getOrPut(line.getInt("block")) { mutableListOf() }
+                    .add(BlockLine(line.getString("text"), line.getBoolean("wrapped")))
             }
             val blocks = answer.getJSONArray("blocks")
             return PdfPageBlocks(
@@ -398,9 +470,48 @@ class KernkraftSession private constructor(
                         box = box(b.getJSONArray("rect")),
                         editable = b.getBoolean("editable"),
                         reason = if (b.isNull("reason")) null else b.optString("reason"),
-                        text = textOf[id].orEmpty().joinToString("\n"),
+                        text = typedText(linesOf[id].orEmpty()),
+                        lineCount = linesOf[id]?.size ?: 0,
                     )
                 },
+            )
+        }
+
+        /** One line of a block as `text` gives it: its text, and whether it ended where the text wrapped. */
+        private data class BlockLine(val text: String, val wrapped: Boolean)
+
+        /**
+         * The text of a block's [lines] as the user would type it. A wrapped line runs on into the next with one
+         * space, so an edit reflows the paragraph in the block's width; a line its writer ended keeps its line feed,
+         * which the engine sets as a line break.
+         */
+        private fun typedText(lines: List<BlockLine>): String = buildString {
+            lines.forEachIndexed { i, line ->
+                if (i == lines.lastIndex) append(line.text)
+                else if (line.wrapped) append(line.text.trimEnd()).append(' ')
+                else append(line.text).append('\n')
+            }
+        }
+
+        internal fun parsePageFonts(answer: JSONObject): PdfPageFonts {
+            val fonts = answer.getJSONArray("fonts")
+            return PdfPageFonts(
+                revision = answer.getLong("revision"),
+                fonts = List(fonts.length()) { i ->
+                    val f = fonts.getJSONObject(i)
+                    val blocks = f.getJSONArray("blocks")
+                    val colour = if (f.isNull("colour")) null else f.getJSONArray("colour")
+                    PdfPageFont(
+                        font = f.getString("font"),
+                        embedded = f.getBoolean("embedded"),
+                        size = f.getDouble("size"),
+                        colour = colour?.let { PdfColour(it.getDouble(0), it.getDouble(1), it.getDouble(2)) },
+                        blocks = List(blocks.length()) { blocks.getInt(it) },
+                        chars = f.getInt("chars"),
+                        nearest = f.getBoolean("nearest"),
+                    )
+                },
+                nearest = if (answer.isNull("nearest")) null else answer.getInt("nearest"),
             )
         }
 

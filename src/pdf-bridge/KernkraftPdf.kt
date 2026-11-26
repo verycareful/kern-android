@@ -53,6 +53,16 @@ object KernkraftPdf {
     }
 
     /**
+     * Writes [sourcePath] as the new, compacted file [outputPath]. The source is only read, and it need not open
+     * for editing: a file whose cross-reference had to be rebuilt to be read comes out with one that is whole,
+     * so the copy can be edited.
+     */
+    fun compactFile(sourcePath: String, outputPath: String): Result {
+        val request = JSONObject().put("path", sourcePath).put("out", outputPath)
+        return call { nativeCompactFile(request.toString()) }
+    }
+
+    /**
      * Hands the engine the font files [paths] for the text it sets in a face of its own and for fonts a
      * file leaves out. It applies to documents opened afterwards. Gives how many faces were indexed.
      */
@@ -65,7 +75,7 @@ object KernkraftPdf {
             .getOrElse { Result.Failure(it.message ?: "Native call failed") }
     }
 
-    /** Reads the engine's answer to a call that makes files. */
+    /** Reads the engine's answer to a call that makes files: `paths` for several, `path` for one. */
     internal fun parseResult(json: String): Result {
         val answer = JSONObject(json)
         if (!answer.optBoolean("ok", false)) {
@@ -73,12 +83,13 @@ object KernkraftPdf {
             val message = answer.optString("message").takeIf { it.isNotEmpty() }
             return Result.Failure(message ?: kind ?: "Unknown error", kind)
         }
+        if (answer.has("path")) return Result.Success(listOf(answer.getString("path")))
         val paths = answer.optJSONArray("paths")
         return Result.Success(List(paths?.length() ?: 0) { paths!!.getString(it) })
     }
 
     /** The session natives, named as in [dispatch]. */
-    internal enum class Native { Open, Close, Text, Search, Links, Annotations, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact, RenderSize, SetSystemFonts }
+    internal enum class Native { Open, Close, Text, PageFonts, Search, Links, Annotations, Apply, Undo, Redo, AppendSince, ConfirmAppended, Compact, RenderSize, SetSystemFonts }
 
     /**
      * Sends [request] to [native] and returns the engine's answer, or throws a
@@ -120,6 +131,7 @@ object KernkraftPdf {
         Native.Open -> nativeOpen(request)
         Native.Close -> nativeClose(request)
         Native.Text -> nativeText(request)
+        Native.PageFonts -> nativePageFonts(request)
         Native.Search -> nativeSearch(request)
         Native.Links -> nativeLinks(request)
         Native.Annotations -> nativeAnnotations(request)
@@ -137,11 +149,15 @@ object KernkraftPdf {
 
     @JvmStatic private external fun nativeExtract(request: String): String
 
+    @JvmStatic private external fun nativeCompactFile(request: String): String
+
     @JvmStatic private external fun nativeOpen(request: String): String
 
     @JvmStatic private external fun nativeClose(request: String): String
 
     @JvmStatic private external fun nativeText(request: String): String
+
+    @JvmStatic private external fun nativePageFonts(request: String): String
 
     @JvmStatic private external fun nativeSearch(request: String): String
 

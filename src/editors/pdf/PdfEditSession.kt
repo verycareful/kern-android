@@ -4,6 +4,8 @@ import android.graphics.Bitmap
 import dev.kern.pdfbridge.KernkraftSession
 import dev.kern.pdfbridge.PdfAnnotation
 import dev.kern.pdfbridge.PdfPageBlocks
+import dev.kern.pdfbridge.PdfPageFonts
+import dev.kern.pdfbridge.PdfPoint
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfStep
 import kotlinx.coroutines.CoroutineDispatcher
@@ -86,6 +88,9 @@ class PdfEditSession private constructor(
 
     /** The text blocks of [page] (0-based) of the document as it stands, with the revision they were read at. */
     fun textBlocks(page: Int): PdfPageBlocks = engine.textBlocks(page)
+
+    /** The fonts of [page] (0-based) of the document as it stands; with [near], the one new text there would follow is marked. */
+    fun pageFonts(page: Int, near: PdfPoint?): PdfPageFonts = engine.pageFonts(page, near)
 
     /** The annotations of [page] (0-based) of the document as it stands. */
     fun annotations(page: Int): List<PdfAnnotation> = engine.annotations(page)

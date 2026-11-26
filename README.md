@@ -26,7 +26,7 @@
 [![elkjs](https://img.shields.io/badge/elkjs-0.12.1-2C5F8A?style=flat-square)](https://github.com/kieler/elkjs)
 [![highlight.js](https://img.shields.io/badge/highlight.js-11.12.0-2F3337?style=flat-square)](https://highlightjs.org/)
 <!-- PDF engine -->
-[![kernkraft](https://img.shields.io/badge/kernkraft-0.2.0.0-DEA584?style=flat-square&logo=rust&logoColor=white)](https://github.com/verycareful/kernkraft)
+[![kernkraft](https://img.shields.io/badge/kernkraft-0.2.2.0-DEA584?style=flat-square&logo=rust&logoColor=white)](https://github.com/verycareful/kernkraft)
 <!-- Project -->
 [![Version](https://img.shields.io/github/v/tag/verycareful/kern-android?style=flat-square&label=version&color=3F5B8B&sort=date)](https://github.com/verycareful/kern-android/tags)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-A42E2B?style=flat-square)](LICENSE)

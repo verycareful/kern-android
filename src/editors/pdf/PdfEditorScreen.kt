@@ -1,5 +1,6 @@
 package dev.kern.editors.pdf
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -108,6 +109,7 @@ private val PageVerticalGap = 12.dp
 @Composable
 fun PdfEditorScreen(
     filePath: String?,
+    onOpenCopy: (Uri) -> Unit,
     vm: PdfEditorViewModel = viewModel(),
 ) {
     LaunchedEffect(filePath) { vm.start(filePath) }
@@ -124,6 +126,17 @@ fun PdfEditorScreen(
         ActivityResultContracts.CreateDocument(PDF_MIME),
     ) { uri -> vm.copyPicked(uri) }
     LaunchedEffect(vm.copyPickerRequest) { vm.copyPickerRequest?.let { copyLauncher.launch(it) } }
+    val repairLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(PDF_MIME),
+    ) { uri -> if (uri != null) vm.saveRepairedCopy(uri) else vm.dismissRepairOffer() }
+    LaunchedEffect(vm.openCopy) { vm.openCopy?.let { vm.consumeOpenCopy(); onOpenCopy(it) } }
+
+    if (vm.repairOffer) {
+        RepairedCopyDialog(
+            onSave = { repairLauncher.launch(repairedCopyName(vm.fileName)) },
+            onCancel = vm::dismissRepairOffer,
+        )
+    }
 
     vm.editWarning?.let { warning ->
         FirstEditDialog(
@@ -155,6 +168,7 @@ fun PdfEditorScreen(
                 vm = vm,
                 onTools = { toolsSheetOpen = true },
                 onSaveCompactedCopy = { compactLauncher.launch(compactedCopyName(vm.fileName)) },
+                onEditRepairedCopy = { repairLauncher.launch(repairedCopyName(vm.fileName)) },
             )
         },
     ) { modifier ->
@@ -171,10 +185,16 @@ fun PdfEditorScreen(
 /**
  * The actions button of the top bar and the drop-down it opens, anchored to the top-right
  * corner. The same button closes it again. Each editing feature adds its own rows here as it
- * lands; for now: Find, Tools (organise pages, merge, extract) and Save compacted copy.
+ * lands; for now: Find, the marking and text tools, Tools (organise pages, merge, extract), Save
+ * compacted copy, and Edit a repaired copy for a file that cannot be edited in place.
  */
 @Composable
-private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCompactedCopy: () -> Unit) {
+private fun PdfActionsMenu(
+    vm: PdfEditorViewModel,
+    onTools: () -> Unit,
+    onSaveCompactedCopy: () -> Unit,
+    onEditRepairedCopy: () -> Unit,
+) {
     val colors = KernTheme.colors
     var expanded by remember { mutableStateOf(false) }
     var closedAt by remember { mutableLongStateOf(0L) }
@@ -208,6 +228,12 @@ private fun PdfActionsMenu(vm: PdfEditorViewModel, onTools: () -> Unit, onSaveCo
                 expanded = false
                 onSaveCompactedCopy()
             }
+            if (vm.needsRepairedCopy) {
+                ActionRow("Edit a repaired copy", KernIcons.Text, enabled = !vm.editBusy) {
+                    expanded = false
+                    onEditRepairedCopy()
+                }
+            }
         }
     }
 }
@@ -227,6 +253,31 @@ private const val REOPEN_GUARD_MS = 250L
 
 /** The page indicator sits this far above the bottom edge while the marking bar is shown. */
 private val ANNOTATE_BAR_CLEARANCE = 120.dp
+
+/**
+ * Says that this file cannot be edited in place and offers to save a repaired copy as a new file and edit
+ * that. The file itself is not changed either way.
+ */
+@Composable
+private fun RepairedCopyDialog(onSave: () -> Unit, onCancel: () -> Unit) {
+    val colors = KernTheme.colors
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = colors.surface,
+        title = { Text("Edit a repaired copy?") },
+        text = { Text(REPAIR_EXPLANATION) },
+        confirmButton = { TextButton(onClick = onSave) { Text("Save repaired copy", color = colors.accent) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel", color = colors.textMid) } },
+    )
+}
+
+internal const val REPAIR_EXPLANATION =
+    "This PDF is damaged: Kern had to rebuild its index of contents to read it, so changes cannot be added to it " +
+        "without risking the file. Kern can save a repaired copy as a new file and open the copy for editing. " +
+        "This file is not changed."
+
+/** The name the save picker suggests for a repaired copy of [fileName]. */
+private fun repairedCopyName(fileName: String): String = "${OriginalCopy.stem(fileName.ifBlank { "document" })} (repaired).pdf"
 
 /** The name the save picker suggests for a compacted copy of [fileName]. */
 private fun compactedCopyName(fileName: String): String = "${OriginalCopy.stem(fileName.ifBlank { "document" })} (compacted).pdf"

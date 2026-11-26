@@ -1,6 +1,6 @@
 # Kern PDF bridge (kernkraft native engine)
 
-Kern Android's PDF tools (merge, extract) call kernkraft, the shared Rust PDF
+Kern Android's PDF editor and tools call kernkraft, the shared Rust PDF
 library of [verycareful/kernkraft](https://github.com/verycareful/kernkraft), through
 JNI. kernkraft is AGPL-3.0, like Kern Android, so the bridge files carry the AGPL-3.0
 header only.
@@ -23,8 +23,8 @@ Viewing a PDF needs no native code either, because Android renders PDFs itself.
 ## Building the .so
 
 `libkernkraft_jni.so` is not checked in (`jniLibs/` is gitignored). CI builds it with
-`.github/actions/build-pdf-bridge`, from the kernkraft commit pinned in that action's
-`kernkraft-ref` input. To build it locally you need Rust with the Android targets,
+`.github/actions/build-pdf-bridge`, from the kernkraft release tag pinned in that action's
+`kernkraft-ref` input (fetched as a tag, so a branch of the same name is never built). To build it locally you need Rust with the Android targets,
 `cargo-ndk` and an Android NDK:
 
 ```
@@ -32,7 +32,7 @@ rustup target add aarch64-linux-android armv7-linux-androideabi x86_64-linux-and
 cargo install cargo-ndk
 export ANDROID_NDK_HOME=/path/to/Android/Sdk/ndk/<version>
 
-# from a kernkraft checkout at the commit the action pins
+# from a kernkraft checkout at the tag the action pins
 cargo ndk -t arm64-v8a -t armeabi-v7a -t x86_64 -o /path/to/kern-android/jniLibs \
     build --release -p kernkraft-jni --locked
 ```
@@ -49,7 +49,8 @@ there. Build just `arm64-v8a` (`-t arm64-v8a`) for a quick phone-only iteration.
 
 `tests/pdf-bridge/KernkraftPdfTest.kt` covers the answer parsing on the JVM.
 `tests/instrumented/pdf-bridge/KernkraftPdfInstrumentedTest.kt` runs merge and extract
-through the real library on a device or emulator (`connectedDebugAndroidTest`).
+through the real library on a device or emulator (`connectedDebugAndroidTest`), and the
+instrumented tests under `tests/instrumented/editors/pdf/` drive the editor through it.
 
 ## Licence
 

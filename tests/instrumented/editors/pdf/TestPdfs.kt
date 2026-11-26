@@ -81,6 +81,30 @@ object TestPdfs {
         return writeObjects(file, bodies)
     }
 
+    /**
+     * [withEditableText] whose `startxref` names an offset past the end of the file, so it opens only after
+     * its cross-reference is rebuilt, and the engine will not edit it in place.
+     */
+    fun withRebuiltXref(file: File, pages: Int): File {
+        withEditableText(file, pages)
+        val text = String(file.readBytes(), Charsets.ISO_8859_1)
+        val marker = "startxref\n"
+        val at = text.lastIndexOf(marker)
+        file.writeBytes((text.substring(0, at + marker.length) + "7777777\n%%EOF\n").toByteArray(Charsets.ISO_8859_1))
+        return file
+    }
+
+    /** A PDF of one page, 300 x 400 points, with nothing on it. */
+    fun blank(file: File): File = writeObjects(
+        file,
+        listOf(
+            "<< /Type /Catalog /Pages 2 0 R >>",
+            "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+            "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 $WIDTH $HEIGHT] /Resources << >> /Contents 4 0 R >>",
+            "<< /Length 0 >>\nstream\n\nendstream",
+        ),
+    )
+
     /** Writes [bodies] as objects 1, 2, ... of a PDF, object 1 being the catalog, with a cross-reference table. */
     private fun writeObjects(file: File, bodies: List<String>): File {
         val out = java.io.ByteArrayOutputStream()

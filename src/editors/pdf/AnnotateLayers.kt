@@ -73,11 +73,13 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
                 }
                 PdfEditorViewModel.AnnotateMode.Note -> Text("Tap the page where the note goes", style = KernType.meta, color = colors.textMid)
                 PdfEditorViewModel.AnnotateMode.Text ->
-                    if (vm.textEdit == null) {
-                        Text("Tap the text to change", style = KernType.meta, color = colors.textMid)
-                    } else {
+                    if (vm.textFieldOpen) {
                         BarChip(
-                            if (vm.textDraft.isEmpty()) "Remove text" else "Apply",
+                            when {
+                                vm.newText != null -> "Add text"
+                                vm.textDraft.isEmpty() -> "Remove text"
+                                else -> "Apply"
+                            },
                             selected = true,
                             enabled = !vm.editBusy,
                             onClick = vm::commitTextEdit,
@@ -88,7 +90,10 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
                     BarChip(width.label, vm.inkWidth == width) { vm.chooseInkWidth(width) }
                 }
             }
-            if (vm.textEdit == null) BarChip("Done", selected = false, onClick = vm::finishAnnotating)
+            if (!vm.textFieldOpen) BarChip("Done", selected = false, onClick = vm::finishAnnotating)
+        }
+        if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.Text && !vm.textFieldOpen) {
+            Text(TextEditModel.TAP_HINT, style = KernType.meta, color = colors.textMid)
         }
         if (vm.annotateMode != PdfEditorViewModel.AnnotateMode.Text) Row(
             Modifier.horizontalScroll(rememberScrollState()),

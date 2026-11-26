@@ -19,6 +19,12 @@ class KernkraftPdfTest {
     }
 
     @Test
+    fun success_with_one_path_lists_it() {
+        val result = KernkraftPdf.parseResult("""{"ok":true,"path":"/cache/compacted.pdf"}""")
+        assertEquals(KernkraftPdf.Result.Success(listOf("/cache/compacted.pdf")), result)
+    }
+
+    @Test
     fun success_without_paths_is_an_empty_list() {
         assertEquals(KernkraftPdf.Result.Success(emptyList()), KernkraftPdf.parseResult("""{"ok":true}"""))
     }

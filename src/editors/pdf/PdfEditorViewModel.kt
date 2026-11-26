@@ -21,6 +21,8 @@ import dev.kern.pdfbridge.PdfDate
 import dev.kern.pdfbridge.PdfEngineException
 import dev.kern.pdfbridge.PdfOp
 import dev.kern.pdfbridge.PdfPageBlocks
+import dev.kern.pdfbridge.PdfPageFont
+import dev.kern.pdfbridge.PdfPageFonts
 import dev.kern.pdfbridge.PdfPoint
 import dev.kern.pdfbridge.PdfStep
 import dev.kern.pdfbridge.PdfTextBlock
@@ -302,9 +304,40 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
     fun changeTextDraft(text: String) { textDraft = text }
 
-    /** A tap at [point] on [page] while changing text: opens the block there for editing, or says why it cannot be. */
+    /**
+     * New text being typed on [page] in a box whose top left corner is [at] and which is [width] wide, as
+     * fractions of the page. [fonts] are the page's fonts as the engine read them; [font] is the one the text
+     * follows (the nearest block's unless the user chose another), null on a page with no text to follow.
+     * [size] is the size the user chose, in points, or null to keep the followed font's. [blocks] are the
+     * page's blocks, whose widths a dragged box snaps to. [pageWidthPoints] sizes the field's letters.
+     */
+    data class NewText(
+        val page: Int,
+        val at: PagePoint,
+        val width: Float,
+        val fonts: PdfPageFonts,
+        val font: PdfPageFont?,
+        val size: Double?,
+        val blocks: List<PdfTextBlock>,
+        val pageWidthPoints: Int?,
+    ) {
+        /** The size the text will be set in, in points. */
+        val effectiveSize: Double get() = size ?: font?.size ?: TextEditModel.EMPTY_PAGE_SIZE
+    }
+
+    /** The new text being typed, shown as a field at its place; null when none is. */
+    var newText by mutableStateOf<NewText?>(null)
+        private set
+
+    /** Whether a field is open over the page, for a block or for new text. */
+    val textFieldOpen: Boolean get() = textEdit != null || newText != null
+
+    /**
+     * A tap at [point] on [page] while changing text: opens the block there for editing, or says why it cannot
+     * be; where there is no text, opens a field for new text there.
+     */
     fun tapTextBlock(page: Int, point: PagePoint) {
-        if (editBusy || textEdit != null) return
+        if (editBusy || textFieldOpen) return
         viewModelScope.launch {
             val read = blocksOf(page)
             if (read == null) {
@@ -313,7 +346,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
             }
             val block = TextEditModel.blockAt(read.blocks, point)
             when {
-                block == null -> toolMessage = TextEditModel.NOTHING_THERE
+                block == null -> openNewText(page, point, read)
                 !block.editable -> toolMessage = TextEditModel.refusal(block.reason)
                 else -> {
                     textDraft = block.text
@@ -323,13 +356,80 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
-    fun cancelTextEdit() { textEdit = null }
+    private suspend fun openNewText(page: Int, point: PagePoint, read: PdfPageBlocks) {
+        val open = session ?: return
+        val fonts = try {
+            withContext(sessionDispatcher) { open.pageFonts(page, PdfPoint(point.x.toDouble(), point.y.toDouble())) }
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            toolError = "Kern could not read the fonts of this page: ${e.message ?: "the PDF engine failed."}"
+            return
+        }
+        if (editBusy || textFieldOpen) return
+        textDraft = ""
+        newText = NewText(
+            page = page,
+            at = point,
+            width = TextEditModel.columnWidth(read.blocks, point.x),
+            fonts = fonts,
+            font = fonts.fonts.firstOrNull { it.nearest },
+            size = null,
+            blocks = read.blocks,
+            pageWidthPoints = pageWidthPoints(page),
+        )
+    }
 
-    /** Puts the field's text into the block: nothing is sent when it is as it was. An empty field takes the block's text out. */
+    /** Sets the new text's box to [width] (a fraction of the page) as dragged; it snaps to the width of a block it comes near. */
+    fun resizeNewText(width: Float) {
+        val open = newText ?: return
+        newText = open.copy(width = TextEditModel.snapWidth(width, open.at.x, open.blocks))
+    }
+
+    /** Makes the new text follow [font], one of the page's fonts, with its size unless the user chose one. */
+    fun chooseNewTextFont(font: PdfPageFont) {
+        val open = newText ?: return
+        newText = open.copy(font = font)
+    }
+
+    /** Sets the new text in [size] points. */
+    fun chooseNewTextSize(size: Double) {
+        val open = newText ?: return
+        newText = open.copy(size = size)
+    }
+
+    fun cancelTextEdit() {
+        textEdit = null
+        newText = null
+    }
+
+    /**
+     * Puts the field's text on the page. For a block, nothing is sent when it is as it was, and an empty field
+     * takes the block's text out; for new text, an empty field puts nothing on the page.
+     */
     fun commitTextEdit() {
+        newText?.let { commitNewText(it); return }
         val open = textEdit ?: return
         if (textDraft == open.block.text) { textEdit = null; return }
         requestEdit(PdfOp.EditText(open.page, open.block.id, open.revision, textDraft))
+    }
+
+    private fun commitNewText(open: NewText) {
+        if (textDraft.isBlank()) { newText = null; return }
+        val follow = open.font?.let { font ->
+            open.fonts.nearest?.takeIf { it in font.blocks } ?: font.blocks.first()
+        }
+        requestEdit(
+            PdfOp.AddText(
+                page = open.page,
+                at = PdfPoint(open.at.x.toDouble(), open.at.y.toDouble()),
+                width = open.width.toDouble(),
+                text = textDraft,
+                likeBlock = follow,
+                likeRevision = follow?.let { open.fonts.revision },
+                size = if (open.font == null) open.effectiveSize else open.size,
+            ),
+        )
     }
 
     // Links
@@ -472,7 +572,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         viewModelScope.launch {
             withContext(sessionDispatcher) { runCatching { sessionOrOpen() } }
                 .onSuccess { publishText() }
-                .onFailure { textFailure = "Search, selection and links are unavailable: ${it.message ?: "the PDF engine could not open this file."}" }
+                .onFailure {
+                    if (it is PdfEngineException && it.needsCompactedCopy) needsRepairedCopy = true
+                    textFailure = "Search, selection and links are unavailable: ${it.message ?: "the PDF engine could not open this file."}"
+                }
         }
     }
 
@@ -493,6 +596,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         if (editBusy || loading || error != null) return false
         if (!KernkraftPdf.available) {
             toolError = "The PDF engine is not bundled in this build, so this PDF cannot be edited."
+            return false
+        }
+        if (needsRepairedCopy) {
+            repairOffer = true
             return false
         }
         handle(gate.request(op))
@@ -550,6 +657,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         annotateMode = mode
         markupSelection = null
         textEdit = null
+        newText = null
         deselect()
     }
 
@@ -760,6 +868,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         annotationCache.keys.retainAll { it !in step.changedPages }
         blockCache.clear()
         textEdit = null
+        newText = null
         TextEditModel.noteFor(step.notes)?.let { toolMessage = it }
         if (countChanged) annotationCache.clear()
         publishText()
@@ -786,11 +895,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         dropPendingInk()
         reselect = null
         deselect()
-        toolError = when {
-            failure is PdfEngineException && TextEditModel.missingLetter(failure.message) != null -> TextEditModel.missingLetter(failure.message)
-            failure is PdfEngineException && failure.needsCompactedCopy ->
-                "This PDF had to be repaired to be read, so Kern cannot edit it in place. ${failure.message}"
-            else -> failure.message ?: "The edit failed."
+        if (failure is PdfEngineException && failure.needsCompactedCopy) {
+            needsRepairedCopy = true
+            repairOffer = true
+        } else {
+            toolError = when {
+                failure is PdfEngineException && TextEditModel.missingLetter(failure.message) != null -> TextEditModel.missingLetter(failure.message)
+                else -> failure.message ?: "The edit failed."
+            }
         }
         val open = session
         if (document == null && open != null) {
@@ -850,8 +962,41 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
+    // Repaired copy
+
+    /**
+     * Whether the engine refused to open this file for editing because its cross-reference had to be rebuilt to
+     * read it (or a later revision cannot be added to): only a compacted copy of it can be edited.
+     */
+    var needsRepairedCopy by mutableStateOf(false)
+        private set
+
+    /** Whether the screen should offer to save a repaired copy and edit that instead. */
+    var repairOffer by mutableStateOf(false)
+        private set
+
+    /** A repaired copy that was saved and should now be opened for editing in place of this file; the screen clears it. */
+    var openCopy by mutableStateOf<Uri?>(null)
+        private set
+
+    fun dismissRepairOffer() { repairOffer = false }
+
+    fun consumeOpenCopy() { openCopy = null }
+
+    /**
+     * Writes a repaired, compacted copy of the file as the new file [target] and asks the screen to open it.
+     * The file shown here is only read.
+     */
+    fun saveRepairedCopy(target: Uri) {
+        repairOffer = false
+        writeCompacted(target, onSaved = { openCopy = target }, failed = "The repaired copy could not be saved.")
+    }
+
     /** The document as it stands, compacted, as a new file at [target]; the original is not touched. */
-    fun saveCompactedTo(target: Uri) {
+    fun saveCompactedTo(target: Uri) =
+        writeCompacted(target, onSaved = { toolMessage = "Saved a compacted copy" }, failed = "The compacted copy could not be saved.")
+
+    private fun writeCompacted(target: Uri, onSaved: () -> Unit, failed: String) {
         if (uri == null || editBusy) return
         if (!KernkraftPdf.available) {
             toolError = "The PDF engine is not bundled in this build."
@@ -862,8 +1007,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         viewModelScope.launch {
             val result = withContext(sessionDispatcher) {
                 runCatching {
-                    val s = sessionOrOpen()
-                    val compacted = s.compact()
+                    val compacted = compactedCopy()
                     try {
                         (ctx.contentResolver.openOutputStream(target, "wt") ?: throw IOException("Could not open $target for writing"))
                             .use { out -> compacted.inputStream().use { it.copyTo(out) } }
@@ -873,9 +1017,38 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 }
             }
             publishText()
-            result.onSuccess { toolMessage = "Saved a compacted copy" }
-                .onFailure { toolError = it.message ?: "The compacted copy could not be saved." }
+            result.onSuccess { onSaved() }
+                .onFailure { toolError = it.message ?: failed }
             editBusy = false
+        }
+    }
+
+    /**
+     * The document as it stands, compacted, in a new cache file. A file the engine cannot open for editing is
+     * compacted from a copy of it as it is on disk. Runs on [sessionDispatcher].
+     */
+    private fun compactedCopy(): File {
+        if (!needsRepairedCopy) {
+            try {
+                return sessionOrOpen().compact()
+            } catch (e: PdfEngineException) {
+                if (!e.needsCompactedCopy) throw e
+                needsRepairedCopy = true
+            }
+        }
+        val dir = toolsCacheDir()
+        val source = copyToCache(uri ?: throw IOException("No file was provided."), dir, uniqueName("repair-source"))
+        try {
+            val out = File(dir, uniqueName("repaired"))
+            return when (val result = KernkraftPdf.compactFile(source.path, out.path)) {
+                is KernkraftPdf.Result.Success -> out
+                is KernkraftPdf.Result.Failure -> {
+                    out.delete()
+                    throw IOException(result.message)
+                }
+            }
+        } finally {
+            source.delete()
         }
     }
 

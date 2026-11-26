@@ -51,7 +51,7 @@ class PdfEditorScreenMarkupZoomInstrumentedTest {
         val settings = KernSettings.create(app)
         compose.setContent {
             CompositionLocalProvider(LocalKernSettings provides settings) {
-                KernTheme { PdfEditorScreen(filePath = "file://${pdf.absolutePath}", vm = vm) }
+                KernTheme { PdfEditorScreen(filePath = "file://${pdf.absolutePath}", onOpenCopy = {}, vm = vm) }
             }
         }
         compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription("Page 1").fetchSemanticsNodes().isNotEmpty() }

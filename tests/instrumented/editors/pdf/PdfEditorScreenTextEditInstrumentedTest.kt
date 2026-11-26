@@ -57,7 +57,7 @@ class PdfEditorScreenTextEditInstrumentedTest {
         val settings = KernSettings.create(app)
         compose.setContent {
             CompositionLocalProvider(LocalKernSettings provides settings) {
-                KernTheme { PdfEditorScreen(filePath = "file://${pdf.absolutePath}", vm = vm) }
+                KernTheme { PdfEditorScreen(filePath = "file://${pdf.absolutePath}", onOpenCopy = {}, vm = vm) }
             }
         }
         compose.waitUntil(20_000) { compose.onAllNodesWithContentDescription("Page 1").fetchSemanticsNodes().isNotEmpty() }
@@ -97,7 +97,7 @@ class PdfEditorScreenTextEditInstrumentedTest {
     @Test
     fun the_menu_row_starts_the_mode_and_the_bar_says_what_to_do() {
         chooseEditPageText()
-        compose.onNodeWithText("Tap the text to change").assertIsDisplayed()
+        compose.onNodeWithText(TextEditModel.TAP_HINT).assertIsDisplayed()
         compose.onNodeWithText("Done").assertIsDisplayed()
         assertEquals(PdfEditorViewModel.AnnotateMode.Text, vm.annotateMode)
     }
@@ -111,7 +111,7 @@ class PdfEditorScreenTextEditInstrumentedTest {
         compose.onNodeWithText("page 1").assertIsDisplayed()
         compose.onNodeWithText("Apply").assertIsDisplayed()
         compose.onNodeWithText("Cancel").assertIsDisplayed()
-        compose.onNodeWithText("Tap the text to change").assertDoesNotExist()
+        compose.onNodeWithText(TextEditModel.TAP_HINT).assertDoesNotExist()
         compose.onNodeWithText("Done").assertDoesNotExist()
     }
 
@@ -151,14 +151,35 @@ class PdfEditorScreenTextEditInstrumentedTest {
         assertFalse(compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty())
         assertFalse(vm.dirty)
         assertEquals(listOf("page 1"), texts())
-        compose.onNodeWithText("Tap the text to change").assertIsDisplayed()
+        compose.onNodeWithText(TextEditModel.TAP_HINT).assertIsDisplayed()
     }
 
     @Test
-    fun a_tap_where_there_is_no_text_says_so_in_a_message() {
+    fun a_tap_where_there_is_no_text_opens_a_field_whose_text_is_added_to_the_page() {
         chooseEditPageText()
-        tapPage(0.8f, 0.9f)
-        compose.waitUntil(10_000) { compose.onAllNodesWithText(TextEditModel.NOTHING_THERE).fetchSemanticsNodes().isNotEmpty() }
-        compose.onNodeWithText(TextEditModel.NOTHING_THERE).assertIsDisplayed()
+        tapPage(0.1f, 0.5f)
+        compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("Helvetica").assertIsDisplayed()
+        compose.onNodeWithText("24 pt").assertIsDisplayed()
+        compose.onNodeWithContentDescription("Width of the new text").assertIsDisplayed()
+        compose.onNode(hasSetTextAction()).performTextReplacement("Added here")
+        compose.onNodeWithText("Add text").performClick()
+        await("the warning") { vm.editWarning != null }
+        InstrumentationRegistry.getInstrumentation().runOnMainSync { vm.editWithoutCopy() }
+        await("the edit") { vm.dirty && !vm.editBusy }
+        assertEquals("the box is as wide as the page's text, so the words wrap there", listOf("page 1", "Added", "here"), texts())
+        assertNull(vm.newText)
+    }
+
+    @Test
+    fun the_size_chip_sets_the_size_of_new_text() {
+        chooseEditPageText()
+        tapPage(0.1f, 0.5f)
+        compose.waitUntil(10_000) { compose.onAllNodes(hasSetTextAction()).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("24 pt").performClick()
+        compose.onNodeWithText("14 pt").performClick()
+        compose.waitForIdle()
+        assertEquals(14.0, vm.newText!!.effectiveSize, 0.0)
+        compose.onNodeWithText("14 pt").assertIsDisplayed()
     }
 }

@@ -1,5 +1,6 @@
 package dev.kern
 
+import android.net.Uri
 import androidx.compose.runtime.Composable
 import androidx.navigation.NavHostController
 import androidx.navigation.NavType
@@ -74,12 +75,25 @@ fun KernNavHost(
         editorDestination(Destinations.EXCEL) { ExcelEditorScreen(filePath = it) }
         editorDestination(Destinations.WORD) { WordEditorScreen(filePath = it) }
         editorDestination(Destinations.POWERPOINT) { PptEditorScreen(filePath = it) }
-        editorDestination(Destinations.PDF) { PdfEditorScreen(filePath = it) }
+        editorDestination(Destinations.PDF) {
+            PdfEditorScreen(
+                filePath = it,
+                // A repaired copy takes the place of the file it was made from, so Back leaves the editor.
+                onOpenCopy = { copy ->
+                    navController.navigate("${Destinations.PDF}/${Uri.encode(copy.toString())}") {
+                        popUpTo(editorRoute(Destinations.PDF)) { inclusive = true }
+                    }
+                },
+            )
+        }
         editorDestination(Destinations.EPUB) { EpubEditorScreen(filePath = it) }
         editorDestination(Destinations.MARKDOWN) { TextEditorScreen(filePath = it, format = DocumentFormat.MARKDOWN) }
         editorDestination(Destinations.TEXT) { TextEditorScreen(filePath = it, format = DocumentFormat.TEXT) }
     }
 }
+
+/** The route pattern of the editor at [base]: the base and its file argument. */
+private fun editorRoute(base: String) = "$base/{${Destinations.ARG_FILE_PATH}}"
 
 /** Shared helper: every editor takes a single nullable filePath string argument. */
 private fun androidx.navigation.NavGraphBuilder.editorDestination(
@@ -87,7 +101,7 @@ private fun androidx.navigation.NavGraphBuilder.editorDestination(
     screen: @Composable (filePath: String?) -> Unit,
 ) {
     composable(
-        route = "$base/{${Destinations.ARG_FILE_PATH}}",
+        route = editorRoute(base),
         arguments = listOf(
             navArgument(Destinations.ARG_FILE_PATH) {
                 type = NavType.StringType

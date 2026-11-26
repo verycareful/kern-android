@@ -76,7 +76,7 @@ class TextEditLayersTest {
     @Test
     fun the_bar_asks_for_a_tap_on_text_and_offers_done() {
         show { AnnotateBar(vm) }
-        compose.onNodeWithText("Tap the text to change").assertIsDisplayed()
+        compose.onNodeWithText(TextEditModel.TAP_HINT).assertIsDisplayed()
         compose.onNodeWithText("Done").assertIsDisplayed()
     }
 

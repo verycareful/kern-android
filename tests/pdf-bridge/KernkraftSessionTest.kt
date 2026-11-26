@@ -267,9 +267,9 @@ class KernkraftSessionTest {
         val page = KernkraftSession.parseBlocks(
             JSONObject(
                 """{"ok":true,"revision":7,"tagged":false,
-                   "lines":[{"block":0,"text":"First line","rect":[0.1,0.1,0.5,0.12],"glyphs":[]},
-                            {"block":0,"text":"second line","rect":[0.1,0.12,0.5,0.14],"glyphs":[]},
-                            {"block":1,"text":"Hidden","rect":[0.1,0.3,0.2,0.32],"glyphs":[]}],
+                   "lines":[{"block":0,"text":"First line","wrapped":false,"rect":[0.1,0.1,0.5,0.12],"glyphs":[]},
+                            {"block":0,"text":"second line","wrapped":false,"rect":[0.1,0.12,0.5,0.14],"glyphs":[]},
+                            {"block":1,"text":"Hidden","wrapped":false,"rect":[0.1,0.3,0.2,0.32],"glyphs":[]}],
                    "blocks":[{"id":0,"rect":[0.1,0.1,0.5,0.14],"editable":true},
                              {"id":1,"rect":[0.1,0.3,0.2,0.32],"editable":false,"reason":"NoSize"}]}""",
             ),
@@ -278,6 +278,7 @@ class KernkraftSessionTest {
         assertEquals(2, page.blocks.size)
         val first = page.blocks[0]
         assertEquals("First line\nsecond line", first.text)
+        assertEquals(2, first.lineCount)
         assertTrue(first.editable)
         assertEquals(null, first.reason)
         assertEquals(PdfBox(0.1f, 0.1f, 0.5f, 0.14f), first.box)
@@ -285,6 +286,24 @@ class KernkraftSessionTest {
         assertFalse(second.editable)
         assertEquals("NoSize", second.reason)
         assertEquals("Hidden", second.text)
+        assertEquals(1, second.lineCount)
+    }
+
+    @Test
+    fun a_wrapped_line_runs_on_with_one_space_and_an_ended_line_keeps_its_line_feed() {
+        val page = KernkraftSession.parseBlocks(
+            JSONObject(
+                """{"ok":true,"revision":1,"tagged":false,
+                   "lines":[{"block":0,"text":"the quick brown","wrapped":true,"rect":[0.1,0.1,0.5,0.12],"glyphs":[]},
+                            {"block":0,"text":"fox jumps ","wrapped":true,"rect":[0.1,0.12,0.5,0.14],"glyphs":[]},
+                            {"block":0,"text":"over.","wrapped":false,"rect":[0.1,0.14,0.3,0.16],"glyphs":[]},
+                            {"block":0,"text":"New paragraph","wrapped":false,"rect":[0.1,0.16,0.4,0.18],"glyphs":[]}],
+                   "blocks":[{"id":0,"rect":[0.1,0.1,0.5,0.18],"editable":true}]}""",
+            ),
+        )
+        val block = page.blocks.single()
+        assertEquals("the quick brown fox jumps over.\nNew paragraph", block.text)
+        assertEquals(4, block.lineCount)
     }
 
     @Test
@@ -311,6 +330,50 @@ class KernkraftSessionTest {
         assertEquals("Serif", json.getString("family"))
         assertEquals(12.0, json.getDouble("size"), 0.0)
         assertEquals(1.0, json.getJSONArray("colour").getDouble(2), 0.0)
+    }
+
+    @Test
+    fun new_text_is_sent_with_the_page_from_one_its_box_and_no_style_it_does_not_set() {
+        val json = PdfOp.AddText(page = 2, at = PdfPoint(0.1, 0.4), width = 0.5, text = "Hello").toJson()
+        assertEquals("addText", json.getString("op"))
+        assertEquals(3, json.getInt("page"))
+        assertEquals("[0.1,0.4]", json.getJSONArray("at").toString())
+        assertEquals(0.5, json.getDouble("width"), 0.0)
+        assertEquals("Hello", json.getString("text"))
+        assertFalse(json.has("like") || json.has("family") || json.has("size") || json.has("colour"))
+    }
+
+    @Test
+    fun new_text_that_follows_a_block_names_it_with_its_revision() {
+        val json = PdfOp.AddText(0, PdfPoint(0.0, 0.0), 0.3, "x", likeBlock = 4, likeRevision = 6, size = 11.0).toJson()
+        val like = json.getJSONObject("like")
+        assertEquals(4, like.getInt("block"))
+        assertEquals(6L, like.getLong("revision"))
+        assertEquals(11.0, json.getDouble("size"), 0.0)
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun a_block_to_follow_without_its_revision_is_refused() {
+        PdfOp.AddText(0, PdfPoint(0.0, 0.0), 0.3, "x", likeBlock = 4)
+    }
+
+    @Test
+    fun the_fonts_of_a_page_are_read_with_the_nearest_marked() {
+        val fonts = KernkraftSession.parsePageFonts(
+            JSONObject(
+                """{"ok":true,"revision":3,"nearest":2,"fonts":[
+                     {"font":"Helvetica","embedded":false,"size":11.0,"colour":[0,0,0],"blocks":[0,2],"chars":140,"nearest":true},
+                     {"font":"ABCDEF+Garamond","embedded":true,"size":18.5,"colour":null,"blocks":[1],"chars":12,"nearest":false}]}""",
+            ),
+        )
+        assertEquals(3L, fonts.revision)
+        assertEquals(2, fonts.nearest)
+        assertEquals(PdfPageFont("Helvetica", false, 11.0, PdfColour(0.0, 0.0, 0.0), listOf(0, 2), 140, true), fonts.fonts[0])
+        assertEquals(null, fonts.fonts[1].colour)
+        assertTrue(fonts.fonts[1].embedded)
+        val none = KernkraftSession.parsePageFonts(JSONObject("""{"ok":true,"revision":0,"nearest":null,"fonts":[]}"""))
+        assertEquals(null, none.nearest)
+        assertTrue(none.fonts.isEmpty())
     }
 
     @Test

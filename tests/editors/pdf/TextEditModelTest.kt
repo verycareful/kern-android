@@ -1,6 +1,8 @@
 package dev.kern.editors.pdf
 
 import dev.kern.pdfbridge.PdfBox
+import dev.kern.pdfbridge.PdfColour
+import dev.kern.pdfbridge.PdfPageFont
 import dev.kern.pdfbridge.PdfTextBlock
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -10,7 +12,7 @@ import org.junit.Test
 class TextEditModelTest {
 
     private fun block(id: Int, left: Float, top: Float, right: Float, bottom: Float, editable: Boolean = true) =
-        PdfTextBlock(id, PdfBox(left, top, right, bottom), editable, if (editable) null else "NoSize", "text $id")
+        PdfTextBlock(id, PdfBox(left, top, right, bottom), editable, if (editable) null else "NoSize", "text $id", 1)
 
     @Test
     fun a_tap_inside_a_block_means_that_block() {
@@ -96,5 +98,65 @@ class TextEditModelTest {
             "Substitute font used for: Arial (sans)\nSubstitute font used for: Times (serif)",
             TextEditModel.noteFor(listOf("substitute font used for: Arial (sans)", "substitute font used for: Times (serif)")),
         )
+    }
+
+    @Test
+    fun new_text_runs_to_the_right_edge_of_the_page_text() {
+        val blocks = listOf(block(0, 0.1f, 0.1f, 0.8f, 0.2f), block(1, 0.1f, 0.3f, 0.6f, 0.4f))
+        assertEquals(0.5f, TextEditModel.columnWidth(blocks, 0.3f), 1e-6f)
+    }
+
+    @Test
+    fun new_text_past_the_page_text_runs_to_a_margin_as_wide_as_the_left_one() {
+        val blocks = listOf(block(0, 0.12f, 0.1f, 0.5f, 0.2f))
+        assertEquals(0.88f - 0.45f, TextEditModel.columnWidth(blocks, 0.45f), 1e-6f)
+    }
+
+    @Test
+    fun new_text_on_a_page_with_no_text_keeps_the_empty_page_margin() {
+        assertEquals(1f - TextEditModel.EMPTY_PAGE_MARGIN - 0.2f, TextEditModel.columnWidth(emptyList(), 0.2f), 1e-6f)
+    }
+
+    @Test
+    fun new_text_near_the_right_edge_gets_the_narrowest_box_or_what_is_left_of_the_page() {
+        val blocks = listOf(block(0, 0.1f, 0.1f, 0.9f, 0.2f))
+        assertEquals(TextEditModel.MIN_NEW_WIDTH, TextEditModel.columnWidth(blocks, 0.85f), 1e-6f)
+        assertEquals(0.04f, TextEditModel.columnWidth(blocks, 0.96f), 1e-6f)
+    }
+
+    @Test
+    fun a_dragged_width_takes_the_width_of_a_block_it_comes_near() {
+        val blocks = listOf(block(0, 0.1f, 0.1f, 0.5f, 0.2f), block(1, 0.1f, 0.3f, 0.7f, 0.4f))
+        assertEquals(0.4f, TextEditModel.snapWidth(0.405f, 0.2f, blocks), 1e-6f)
+        assertEquals(0.6f, TextEditModel.snapWidth(0.595f, 0.2f, blocks), 1e-6f)
+        assertEquals(0.5f, TextEditModel.snapWidth(0.5f, 0.2f, blocks), 1e-6f)
+    }
+
+    @Test
+    fun a_dragged_width_stays_on_the_page_and_does_not_snap_to_a_block_that_would_leave_it() {
+        val blocks = listOf(block(0, 0.0f, 0.1f, 0.6f, 0.2f))
+        assertEquals(0.5f, TextEditModel.snapWidth(0.6f, 0.5f, blocks), 1e-6f)
+        assertEquals(TextEditModel.MIN_NEW_WIDTH, TextEditModel.snapWidth(0.01f, 0.2f, emptyList()), 1e-6f)
+    }
+
+    @Test
+    fun a_subset_font_is_shown_without_its_tag() {
+        assertEquals("Garamond", TextEditModel.fontName("ABCDEF+Garamond"))
+        assertEquals("Helvetica", TextEditModel.fontName("Helvetica"))
+        assertEquals("abcdef+Odd", TextEditModel.fontName("abcdef+Odd"))
+    }
+
+    @Test
+    fun sizes_are_shown_whole_or_to_a_tenth() {
+        assertEquals("11 pt", TextEditModel.sizeLabel(11.0))
+        assertEquals("10.5 pt", TextEditModel.sizeLabel(10.5))
+        assertEquals("12 pt", TextEditModel.sizeLabel(11.998))
+    }
+
+    @Test
+    fun the_font_chip_names_the_followed_font_or_the_default_on_an_empty_page() {
+        val font = PdfPageFont("ABCDEF+Arial", true, 11.0, PdfColour(0.0, 0.0, 0.0), listOf(0), 10, true)
+        assertEquals("Arial", TextEditModel.fontLabel(font))
+        assertEquals(TextEditModel.EMPTY_PAGE_FACE, TextEditModel.fontLabel(null))
     }
 }
