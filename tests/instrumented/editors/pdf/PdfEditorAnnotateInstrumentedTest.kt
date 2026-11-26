@@ -107,6 +107,46 @@ class PdfEditorAnnotateInstrumentedTest {
     }
 
     @Test
+    fun a_stroke_that_is_in_the_document_stays_on_screen_until_the_page_picture_with_it_is_up() {
+        onMain {
+            vm.startInk()
+            vm.chooseColour(MarkColour.Red)
+            vm.addInkStroke(0, listOf(PagePoint(0.1f, 0.6f), PagePoint(0.9f, 0.6f)), 4f / 3f)
+        }
+        acceptTheFirstEditWarning()
+        await("the stroke to be taken in") { vm.pendingInk.isEmpty() }
+
+        val held = vm.heldInk.single()
+        assertEquals(0, held.page)
+        assertEquals(MarkColour.Red, held.colour)
+        assertEquals(1, held.strokes.size)
+        assertFalse("not shown yet", vm.isShown(0, vm.pageVersion(0)))
+
+        onMain { vm.pictureShown(0, vm.pageVersion(0) - 1) }
+        assertEquals("an older picture does not release it", 1, vm.heldInk.size)
+        onMain { vm.pictureShown(1, vm.pageVersion(0)) }
+        assertEquals("another page's picture does not release it", 1, vm.heldInk.size)
+        onMain { vm.pictureShown(0, vm.pageVersion(0)) }
+        assertTrue(vm.heldInk.isEmpty())
+        assertTrue(vm.isShown(0, vm.pageVersion(0)))
+    }
+
+    @Test
+    fun marked_text_stays_on_screen_until_the_page_picture_with_it_is_up() {
+        onMain {
+            vm.startMarkup()
+            vm.selectMarkup(MarkupSelection(page = 0, anchor = 0, focus = 3))
+            vm.applyMarkup()
+        }
+        acceptTheFirstEditWarning()
+        val held = vm.heldMarkup.single()
+        assertEquals(MarkColour.Yellow, held.colour)
+        assertTrue(held.quads.isNotEmpty())
+        onMain { vm.pictureShown(0, vm.pageVersion(0)) }
+        assertTrue(vm.heldMarkup.isEmpty())
+    }
+
+    @Test
     fun a_stroke_drawn_while_the_warning_waits_goes_in_after_the_first_as_its_own_edit() {
         onMain {
             vm.startInk()

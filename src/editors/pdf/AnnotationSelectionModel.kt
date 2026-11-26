@@ -97,20 +97,31 @@ object AnnotationSelectionModel {
         val locked = annotation.flags and FLAG_LOCKED != 0L
         val textLocked = annotation.flags and FLAG_LOCKED_CONTENTS != 0L
         val note = annotation.kind == PdfAnnotationKind.Note
+        val marked = annotation.kind in MARKUP_KINDS
         val editable = named && !locked && annotation.drawnByLibrary
         return AnnotationActions(
             recolour = editable,
             move = editable && (note || annotation.kind == PdfAnnotationKind.Ink),
             delete = named && !locked,
-            editText = named && !locked && !textLocked && note,
+            editText = named && !locked && !textLocked && (note || marked),
             limit = when {
                 !named -> "Kern cannot change this annotation: the file stores it in a form Kern cannot address."
                 locked -> "This annotation is locked in the file, so Kern cannot change it."
                 !annotation.drawnByLibrary -> "This is a ${nameOf(annotation)} annotation. Kern can delete it but cannot recolour or move it."
-                textLocked && note -> "The text of this note is locked in the file."
+                textLocked && (note || marked) -> "The text of this ${nameOf(annotation).lowercase()} is locked in the file."
                 else -> null
             },
         )
+    }
+
+    /** The kinds that mark text: each can carry a note, the text of the annotation. */
+    private val MARKUP_KINDS = setOf(PdfAnnotationKind.Highlight, PdfAnnotationKind.Underline, PdfAnnotationKind.StrikeOut)
+
+    /** What the chip that changes the text of [annotation] says: a note's text is edited, a mark has a note added or changed. */
+    fun noteChipLabel(annotation: PdfAnnotation): String = when {
+        annotation.kind == PdfAnnotationKind.Note -> "Edit text"
+        annotation.contents.isNullOrBlank() -> "Add note"
+        else -> "Edit note"
     }
 
     /** What the user calls [annotation]. */

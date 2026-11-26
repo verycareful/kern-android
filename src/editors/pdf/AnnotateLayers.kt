@@ -71,7 +71,7 @@ internal fun AnnotateBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier) 
                 PdfEditorViewModel.AnnotateMode.Markup -> for (kind in MarkupKind.entries) {
                     BarChip(kindLabel(kind), vm.markupKind == kind) { vm.chooseMarkupKind(kind) }
                 }
-                PdfEditorViewModel.AnnotateMode.Note -> Text("Tap the page where the note goes", style = KernType.meta, color = colors.textMid)
+                PdfEditorViewModel.AnnotateMode.Note -> Text("Tap a note to open it, or an empty place to add one", style = KernType.meta, color = colors.textMid)
                 PdfEditorViewModel.AnnotateMode.Text ->
                     if (vm.textFieldOpen) {
                         BarChip(
@@ -261,8 +261,8 @@ private const val HIGHLIGHT_ALPHA = 0.4f
 
 /**
  * A surface that takes the pen: one finger draws, two fingers are left to pan and zoom (a stroke
- * that a second finger interrupts is dropped). A stroke is sent when the finger lifts, and stays on
- * screen until it is part of the page.
+ * that a second finger interrupts is dropped). A stroke is sent when the finger lifts; [HeldMarks]
+ * keeps it on screen until it is part of the page's picture.
  */
 @Composable
 internal fun InkLayer(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Modifier) {
@@ -272,7 +272,6 @@ internal fun InkLayer(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Mo
     val inkColour = vm.inkColour
     val pen = Color(inkColour.red.toFloat(), inkColour.green.toFloat(), inkColour.blue.toFloat())
     val penWidth = vm.inkWidth.points
-    val pending = vm.pendingInk.firstOrNull { it.page == page }
 
     Canvas(
         modifier.pointerInput(page) {
@@ -298,6 +297,7 @@ internal fun InkLayer(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Mo
                     // The fingers are left alone to pan and zoom until the last one lifts.
                     do { val event = awaitPointerEvent() } while (event.changes.any { it.pressed })
                 } else {
+                    // The stroke goes to the layer under this one in the same frame, so it never leaves the screen.
                     vm.addInkStroke(page, stroke, aspect)
                     live = emptyList()
                 }
@@ -305,9 +305,41 @@ internal fun InkLayer(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Mo
         },
     ) {
         val perPoint = widthPoints?.let { size.width / it } ?: (size.width / FALLBACK_PAGE_POINTS)
-        val strokeWidth = (penWidth * perPoint).toFloat()
-        pending?.strokes?.forEach { drawStroke(it.map { p -> Offset(p.x * size.width, p.y * size.height) }, pen, strokeWidth) }
-        drawStroke(live, pen, strokeWidth)
+        drawStroke(live, pen, (penWidth * perPoint).toFloat())
+    }
+}
+
+/**
+ * What the user drew or marked and that is not yet part of the page's picture: strokes waiting to go in
+ * and strokes and marks that went in, until the page is drawn again with them. It is drawn in every mode,
+ * so leaving a tool does not lose them for a moment.
+ */
+@Composable
+internal fun HeldMarks(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Modifier) {
+    val pending = vm.pendingInk.firstOrNull { it.page == page }
+    val held = vm.heldInk.filter { it.page == page }
+    val marks = vm.heldMarkup.filter { it.page == page }
+    if (pending == null && held.isEmpty() && marks.isEmpty()) return
+    var widthPoints by remember(page) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(page, vm.documentEpoch) { widthPoints = vm.pageWidthPoints(page) }
+    val inkColour = vm.inkColour
+    val penWidth = vm.inkWidth.points
+    Canvas(modifier) {
+        val perPoint = widthPoints?.let { size.width / it } ?: (size.width / FALLBACK_PAGE_POINTS)
+        for (mark in marks) {
+            val colour = Color(mark.colour.red.toFloat(), mark.colour.green.toFloat(), mark.colour.blue.toFloat())
+            for (quad in mark.quads) drawMark(mark.kind, quad, colour)
+        }
+        for (ink in held) {
+            val colour = Color(ink.colour.red.toFloat(), ink.colour.green.toFloat(), ink.colour.blue.toFloat())
+            for (stroke in ink.strokes) {
+                drawStroke(stroke.map { p -> Offset(p.x * size.width, p.y * size.height) }, colour, (ink.width.points * perPoint).toFloat())
+            }
+        }
+        pending?.strokes?.forEach {
+            val colour = Color(inkColour.red.toFloat(), inkColour.green.toFloat(), inkColour.blue.toFloat())
+            drawStroke(it.map { p -> Offset(p.x * size.width, p.y * size.height) }, colour, (penWidth * perPoint).toFloat())
+        }
     }
 }
 

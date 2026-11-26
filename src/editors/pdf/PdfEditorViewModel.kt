@@ -15,6 +15,7 @@ import dev.kern.pdfbridge.KernkraftPdf
 import dev.kern.pdfbridge.MarkupKind
 import dev.kern.pdfbridge.PdfAnnotation
 import dev.kern.pdfbridge.PdfAnnotationId
+import dev.kern.pdfbridge.PdfAnnotationKind
 import dev.kern.pdfbridge.PdfBox
 import dev.kern.pdfbridge.PdfColour
 import dev.kern.pdfbridge.PdfDate
@@ -247,6 +248,26 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
+    /**
+     * A tap at [point] on [page] (whose height over width is [pageAspect]) while on notes: opens the note there to
+     * change, or says why it cannot be; where there is no note, asks what a new one says. [slop] is how far, in page
+     * widths, a touch may miss the icon.
+     */
+    fun tapNote(page: Int, point: PagePoint, pageAspect: Float, slop: Float) {
+        if (editBusy) return
+        viewModelScope.launch {
+            val notes = annotationsOf(page).filter { it.kind == PdfAnnotationKind.Note }
+            val touched = AnnotationSelectionModel.hit(notes, point, pageAspect, slop)
+            val id = touched?.id
+            when {
+                touched == null -> placeNote(page, point)
+                id != null && AnnotationSelectionModel.actionsOf(touched).editText ->
+                    noteRequest = NoteRequest.Change(page, id, touched.contents.orEmpty())
+                else -> toolMessage = AnnotationSelectionModel.actionsOf(touched).limit ?: "Kern cannot change this note."
+            }
+        }
+    }
+
     /** A tap at [point] on [page] while adding a note: asks what the note says. */
     fun placeNote(page: Int, point: PagePoint) {
         if (editBusy) return
@@ -292,8 +313,22 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         return read
     }
 
-    /** A block being changed: what it said when it was read, and the revision of the document it was read at. */
-    data class TextEdit(val page: Int, val block: PdfTextBlock, val revision: Long)
+    /**
+     * A block being changed: what it said when it was read, and the revision of the document it was read at.
+     * [left] and [width], fractions of the page, are the box the user dragged it to; null is as the block stands.
+     * [blocks] are the page's blocks, whose widths a dragged width snaps to.
+     */
+    data class TextEdit(
+        val page: Int,
+        val block: PdfTextBlock,
+        val revision: Long,
+        val left: Float? = null,
+        val width: Float? = null,
+        val blocks: List<PdfTextBlock> = emptyList(),
+    ) {
+        val boxLeft: Float get() = left ?: block.box.left
+        val boxWidth: Float get() = width ?: (block.box.right - block.box.left)
+    }
 
     /** The block whose text is being changed, shown as a field over the block; null when none is. */
     var textEdit by mutableStateOf<TextEdit?>(null)
@@ -338,7 +373,9 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
      * be; where there is no text, opens a field for new text there.
      */
     fun tapTextBlock(page: Int, point: PagePoint) {
-        if (editBusy || textFieldOpen) return
+        if (editBusy) return
+        // A tap outside the open field leaves it: what was typed is kept, and no other field opens on the same tap.
+        if (textFieldOpen) { commitTextEdit(); return }
         viewModelScope.launch {
             val read = blocksOf(page)
             if (read == null) {
@@ -351,7 +388,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 !block.editable -> toolMessage = TextEditModel.refusal(block.reason)
                 else -> {
                     textDraft = block.text
-                    textEdit = TextEdit(page, block, read.revision)
+                    textEdit = TextEdit(page, block, read.revision, blocks = read.blocks)
                 }
             }
         }
@@ -387,6 +424,26 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         newText = open.copy(width = TextEditModel.snapWidth(width, open.at.x, open.blocks))
     }
 
+    /** Moves the new text's box sideways by [by], a fraction of the page; its width stays and it stays on the page. */
+    fun moveNewTextBy(by: Float) {
+        val open = newText ?: return
+        newText = open.copy(at = open.at.copy(x = TextEditModel.clampLeft(open.at.x + by, open.width)))
+    }
+
+    /** Sets the open block's box to [width] as dragged; it snaps to the width of a block it comes near, and stays on the page. */
+    fun resizeTextEdit(width: Float) {
+        val open = textEdit ?: return
+        val snapped = TextEditModel.snapWidth(width, open.boxLeft, open.blocks)
+        open.block.box.let { textEdit = open.copy(width = TextEditModel.changedOrNull(snapped, it.right - it.left)) }
+    }
+
+    /** Moves the open block's box sideways by [by], a fraction of the page; its width stays and it stays on the page. */
+    fun moveTextEditBy(by: Float) {
+        val open = textEdit ?: return
+        val left = TextEditModel.clampLeft(open.boxLeft + by, open.boxWidth)
+        textEdit = open.copy(left = TextEditModel.changedOrNull(left, open.block.box.left))
+    }
+
     /** Makes the new text follow [font], one of the page's fonts, with its size unless the user chose one. */
     fun chooseNewTextFont(font: PdfPageFont) {
         val open = newText ?: return
@@ -411,8 +468,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     fun commitTextEdit() {
         newText?.let { commitNewText(it); return }
         val open = textEdit ?: return
-        if (textDraft == open.block.text) { textEdit = null; return }
-        requestEdit(PdfOp.EditText(open.page, open.block.id, open.revision, textDraft))
+        // A box moved or widened is a change though the words are the same.
+        if (textDraft == open.block.text && open.left == null && open.width == null) { textEdit = null; return }
+        requestEdit(
+            PdfOp.EditText(
+                open.page, open.block.id, open.revision, textDraft,
+                left = open.left?.toDouble(), width = open.width?.toDouble(),
+            ),
+        )
     }
 
     private fun commitNewText(open: NewText) {
@@ -688,7 +751,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         viewModelScope.launch {
             val quads = selection.quads(pageGlyphs(selection.page))
             if (quads.isEmpty()) return@launch
-            requestEdit(
+            val taken = requestEdit(
                 PdfOp.AddMarkup(
                     kind = markupKind,
                     page = selection.page,
@@ -697,6 +760,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                     modified = PdfDate.now(),
                 ),
             )
+            if (taken) markupSent = HeldMarkup(selection.page, markupKind, markColour, quads, version = 0)
         }
     }
 
@@ -706,8 +770,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     var pendingInk by mutableStateOf<List<PendingInk>>(emptyList())
         private set
 
-    /** The pending ink the running or waiting edit holds. */
+    /** The pending ink the running or waiting edit holds, and the colour and width it is sent in. */
     private var inkSent: PendingInk? = null
+    private var inkSentColour = MarkColour.Black
+    private var inkSentWidth = InkWidth.Medium
 
     /**
      * Adds a [stroke] drawn on [page] (whose height over width is [pageAspect]). It is one ink
@@ -731,6 +797,8 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         val entry = pendingInk.firstOrNull() ?: return
         val strokes = entry.strokes.map { InkStroke.smooth(it, entry.pageAspect) }.filter { it.isNotEmpty() }
         inkSent = entry
+        inkSentColour = inkColour
+        inkSentWidth = inkWidth
         requestEdit(
             PdfOp.AddInk(
                 page = entry.page,
@@ -754,6 +822,66 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         }
     }
 
+    /** Ink that went into the document and is drawn over the page until the page's new picture is up, so it never leaves the screen. */
+    data class HeldInk(
+        val page: Int,
+        val strokes: List<List<PagePoint>>,
+        val pageAspect: Float,
+        val colour: MarkColour,
+        val width: InkWidth,
+        val version: Int,
+    )
+
+    var heldInk by mutableStateOf<List<HeldInk>>(emptyList())
+        private set
+
+    /** Marked text that went into the document, drawn the way the selection was until the page's new picture is up. */
+    data class HeldMarkup(val page: Int, val kind: MarkupKind, val colour: MarkColour, val quads: List<PageRect>, val version: Int)
+
+    var heldMarkup by mutableStateOf<List<HeldMarkup>>(emptyList())
+        private set
+
+    /**
+     * The version of each page whose picture is on screen. The engine does one thing at a time, so what the page
+     * shows comes first and its text is read after: a page is not read for text until its picture is up.
+     */
+    private val shownVersions = androidx.compose.runtime.mutableStateMapOf<Int, Int>()
+
+    /** Whether the picture of [page] at [version] (or a later one) is on screen. */
+    fun isShown(page: Int, version: Int): Boolean = (shownVersions[page] ?: -1) >= version
+
+    /** The marking the running or waiting edit puts in. */
+    private var markupSent: HeldMarkup? = null
+
+    /**
+     * Lets what is held for [page] go once its picture at [version] or later is on screen. An edit shows in the
+     * page only when the engine has drawn it again, a moment after the edit is in; what the user drew or marked
+     * stays on screen until then, so the page does not lose it and show it again.
+     */
+    fun pictureShown(page: Int, version: Int) {
+        shownVersions[page] = version
+        if (heldInk.any { it.page == page && it.version <= version }) {
+            heldInk = heldInk.filterNot { it.page == page && it.version <= version }
+        }
+        if (heldMarkup.any { it.page == page && it.version <= version }) {
+            heldMarkup = heldMarkup.filterNot { it.page == page && it.version <= version }
+        }
+    }
+
+    /** Holds what the edit that just went in drew, after the version of the page it changed has moved on. */
+    private fun holdAdopted(step: PdfStep, countChanged: Boolean) {
+        val inked = inkSent
+        inkAdopted()
+        if (!countChanged && inked != null && inked.page in step.changedPages) {
+            heldInk = heldInk + HeldInk(inked.page, inked.strokes, inked.pageAspect, inkSentColour, inkSentWidth, pageVersion(inked.page))
+        }
+        val marked = markupSent
+        markupSent = null
+        if (!countChanged && marked != null && marked.page in step.changedPages) {
+            heldMarkup = heldMarkup + marked.copy(version = pageVersion(marked.page))
+        }
+    }
+
     private fun dropPendingInk() {
         inkSent = null
         pendingInk = emptyList()
@@ -771,6 +899,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
     fun cancelEdit() {
         gate.cancel()
         dropPendingInk()
+        markupSent = null
         reselect = null
         forgetCarry()
     }
@@ -867,7 +996,6 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         document = doc
         pageCount = step.pageCount
         markupSelection = null
-        inkAdopted()
         textRevision++
         annotationCache.keys.retainAll { it !in step.changedPages }
         blockCache.clear()
@@ -880,6 +1008,7 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         canUndo = step.canUndo
         canRedo = step.canRedo
         if (countChanged) {
+            shownVersions.clear()
             lineCache.clear()
             linkCache.clear()
             pageVersions.clear()
@@ -891,12 +1020,14 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
                 pageVersions[page] = pageVersion(page) + 1
             }
         }
+        holdAdopted(step, countChanged)
         reselectAfter(step)
     }
 
     /** An edit failed: say why, and put the last good picture back if the failure took it away. */
     private suspend fun editFailed(failure: Throwable) {
         dropPendingInk()
+        markupSent = null
         reselect = null
         deselect()
         if (failure is PdfEngineException && failure.needsCompactedCopy) {

@@ -221,7 +221,7 @@ private fun PdfActionsMenu(
                 vm.startMarkup()
             }
             ActionRow("Draw", KernIcons.Pen, enabled = !vm.editBusy) { expanded = false; vm.startInk() }
-            ActionRow("Add note", KernIcons.Note, enabled = !vm.editBusy) { expanded = false; vm.startNote() }
+            ActionRow("Notes", KernIcons.Note, enabled = !vm.editBusy) { expanded = false; vm.startNote() }
             ActionRow("Edit page text", KernIcons.Text, enabled = vm.canSelectText && !vm.editBusy) { expanded = false; vm.startTextEdit() }
             ActionRow("Tools", KernIcons.Merge) { expanded = false; onTools() }
             ActionRow("Save compacted copy", KernIcons.Save, enabled = !vm.editBusy) {
@@ -252,7 +252,7 @@ private fun ActionRow(label: String, icon: androidx.compose.ui.graphics.vector.I
 private const val REOPEN_GUARD_MS = 250L
 
 /** The page indicator sits this far above the bottom edge while the marking bar is shown. */
-private val ANNOTATE_BAR_CLEARANCE = 120.dp
+internal val ANNOTATE_BAR_CLEARANCE = 120.dp
 
 /**
  * Says that this file cannot be edited in place and offers to save a repaired copy as a new file and edit
@@ -370,8 +370,9 @@ private fun PdfPager(
                 }
             }
 
-            // Page indicator pill: which page sits at the top of the viewport. Tap to go to a page.
-            Box(
+            // Page indicator pill: which page sits at the top of the viewport. Tap to go to a page. It steps
+            // aside while a text field is open, whose chips would be under it.
+            if (!vm.textFieldOpen) Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
                     .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = if (annotating || selecting) ANNOTATE_BAR_CLEARANCE else 12.dp)
@@ -683,6 +684,7 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
     var bitmap by remember(index, baseWidthPx) { mutableStateOf<ImageBitmap?>(null) }
     LaunchedEffect(index, baseWidthPx, version, vm.documentEpoch) {
         bitmap = vm.renderPage(index, baseWidthPx)?.asImageBitmap()
+        vm.pictureShown(index, version)
     }
 
     val widthDp = with(LocalDensity.current) { (baseWidthPx * zoom).toDp() }
@@ -696,7 +698,10 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
             val matches = vm.pdfMatches.filter { it.page == index }
             val current = vm.currentMatch
             var lines by remember(index) { mutableStateOf<List<PdfTextLine>>(emptyList()) }
-            LaunchedEffect(index, version, vm.documentEpoch) { lines = vm.pageLines(index) }
+            // The text of the page is read only where a mode uses it, and after the page's picture is up.
+            val usesLines = vm.annotateMode == PdfEditorViewModel.AnnotateMode.None || vm.annotateMode == PdfEditorViewModel.AnnotateMode.Markup
+            val shown = vm.isShown(index, version)
+            LaunchedEffect(index, version, vm.documentEpoch, usesLines, shown) { if (usesLines && shown) lines = vm.pageLines(index) }
             Box(
                 Modifier
                     .width(widthDp)
@@ -721,6 +726,7 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
                     .clip(RoundedCornerShape(KernRadius.pdfPage))
                     .border(1.dp, colors.borderSoft, RoundedCornerShape(KernRadius.pdfPage)),
             )
+            HeldMarks(vm, index, Modifier.matchParentSize())
             when (vm.annotateMode) {
                 PdfEditorViewModel.AnnotateMode.None -> {
                     PdfTextOverlay(lines, Modifier.matchParentSize())

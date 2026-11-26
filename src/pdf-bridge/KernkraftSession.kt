@@ -236,8 +236,12 @@ sealed interface PdfOp {
 
     /**
      * Sets [text] as the text of block [block] of [page], which was read at [revision]; the engine refuses
-     * the edit when the document has moved on since. Empty text takes the block's text out. A field that is
-     * not set keeps what the block had.
+     * the edit when the document has moved on since. Empty text takes the block's text out, whatever [left]
+     * and [width] say. A field that is not set keeps what the block had.
+     *
+     * [left] and [width] are fractions of the page's width. [width] is the width the text is broken to; [left]
+     * is where the left edge of the block's rectangle stands, which moves the whole block sideways and keeps
+     * its width. Neither moves the block vertically, and neither is sent unless the user set it.
      */
     data class EditText(
         val page: Int,
@@ -247,6 +251,8 @@ sealed interface PdfOp {
         val family: String? = null,
         val size: Double? = null,
         val colour: PdfColour? = null,
+        val left: Double? = null,
+        val width: Double? = null,
     ) : PdfOp {
         override fun toJson(): JSONObject = JSONObject()
             .put("op", "editText")
@@ -258,6 +264,8 @@ sealed interface PdfOp {
                 family?.let { put("family", it) }
                 size?.let { put("size", it) }
                 colour?.let { put("colour", it.toJson()) }
+                left?.let { put("left", it) }
+                width?.let { put("width", it) }
             }
     }
 

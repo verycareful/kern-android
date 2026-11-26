@@ -30,7 +30,7 @@ internal object TextEditModel {
         "NoGlyphs" -> "This text holds only spaces, so there is nothing to change."
         "NoSize" -> "This text has no size, so none of it is drawn and there is nothing to change."
         "NotOnPage" -> "This text is no longer on the page as it stands. Tap it again."
-        "Type3Font" -> "This text is drawn with a font made of shapes, so Kern cannot type in it."
+        "Type3Font" -> "This text is drawn as small pictures of letters (a Type 3 font), not as letters Kern can change."
         "VerticalWriting" -> "This text runs top to bottom, which Kern cannot change."
         "TaggedFormContent" -> "This text is part of a tagged form, so Kern cannot change it."
         "ClippingRenderMode" -> "This text cuts the shape of what is drawn after it, so Kern cannot change it."
@@ -93,6 +93,15 @@ internal object TextEditModel {
             .minByOrNull { kotlin.math.abs(it - width) }
         return fit(snapped ?: width, x)
     }
+
+    /** A box width or left edge within this, as a fraction of the page width, of the block's own is the block's own: nothing to send. */
+    const val BOX_EPSILON = 0.001f
+
+    /** [left] for a box [width] wide, kept on the page: the box moves with its width and never off either edge. */
+    fun clampLeft(left: Float, width: Float): Float = left.coerceIn(0f, maxOf(0f, 1f - width))
+
+    /** [value] as the user set it, or null when it is [original] (to [BOX_EPSILON]): a box that was not changed sends nothing. */
+    fun changedOrNull(value: Float, original: Float): Float? = value.takeIf { kotlin.math.abs(it - original) >= BOX_EPSILON }
 
     private fun fit(width: Float, x: Float): Float {
         val room = 1f - x

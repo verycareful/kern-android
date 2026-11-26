@@ -119,12 +119,16 @@ internal fun Modifier.carryAnnotation(vm: PdfEditorViewModel, page: Int, reach: 
     }
 }
 
-/** A surface that takes a tap while a note is being placed. */
+/** A surface that takes a tap while on notes: a tap on a note opens it, a tap elsewhere places a new one. */
 @Composable
 internal fun NoteTapLayer(vm: PdfEditorViewModel, page: Int, modifier: Modifier = Modifier) {
+    val reach = touchReachPx()
     Box(
-        modifier.pointerInput(page) {
-            detectTapGestures { vm.placeNote(page, PagePoint(it.x / size.width, it.y / size.height)) }
+        modifier.pointerInput(page, reach) {
+            detectTapGestures {
+                val width = size.width.toFloat().coerceAtLeast(1f)
+                vm.tapNote(page, PagePoint(it.x / width, it.y / size.height), size.height / width, reach / width)
+            }
         },
     )
 }
@@ -167,7 +171,9 @@ internal fun SelectionBar(vm: PdfEditorViewModel, modifier: Modifier = Modifier)
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            if (actions.editText) BarChip("Edit text", selected = false, enabled = !vm.editBusy, onClick = vm::editSelectedNoteText)
+            if (actions.editText) {
+                BarChip(AnnotationSelectionModel.noteChipLabel(annotation), selected = false, enabled = !vm.editBusy, onClick = vm::editSelectedNoteText)
+            }
             if (actions.delete) BarChip("Delete", selected = false, enabled = !vm.editBusy, onClick = vm::deleteSelected)
             BarChip("Close", selected = false, onClick = vm::deselect)
         }
@@ -190,7 +196,7 @@ internal fun NoteDialog(request: PdfEditorViewModel.NoteRequest, onCancel: () ->
     val colors = KernTheme.colors
     var text by remember(request) { mutableStateOf(request.initial) }
     val focus = remember { FocusRequester() }
-    val adding = request is PdfEditorViewModel.NoteRequest.New
+    val adding = request.initial.isBlank()
     LaunchedEffect(request) { focus.requestFocus() }
     AlertDialog(
         onDismissRequest = onCancel,

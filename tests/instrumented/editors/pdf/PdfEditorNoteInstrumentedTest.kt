@@ -241,4 +241,43 @@ class PdfEditorNoteInstrumentedTest {
         await("the edit") { vm.canUndo && !vm.editBusy && vm.selectedAnnotation == null }
         assertEquals("the note is still there", 1, notes().size)
     }
+
+    @Test
+    fun a_tap_on_an_existing_note_while_on_notes_opens_it_and_a_tap_elsewhere_asks_for_a_new_one() {
+        addNote("Check this")
+        val rect = notes().single().rect
+        onMain { vm.startNote() }
+        onMain { vm.tapNote(0, PagePoint((rect.left + rect.right) / 2, (rect.top + rect.bottom) / 2), aspect, reach) }
+        await("the note to open") { vm.noteRequest != null }
+        val opened = vm.noteRequest as PdfEditorViewModel.NoteRequest.Change
+        assertEquals("Check this", opened.initial)
+        assertEquals(1, notes().size)
+
+        onMain { vm.cancelNoteText() }
+        onMain { vm.tapNote(0, PagePoint(0.8f, 0.8f), aspect, reach) }
+        await("a new note to be asked for") { vm.noteRequest != null }
+        assertTrue(vm.noteRequest is PdfEditorViewModel.NoteRequest.New)
+    }
+
+    @Test
+    fun a_highlight_takes_a_note_that_is_kept_and_read_back() {
+        onMain { vm.requestEdit(dev.kern.pdfbridge.PdfOp.AddMarkup(dev.kern.pdfbridge.MarkupKind.Highlight, 0, listOf(dev.kern.pdfbridge.PdfBox(0.1f, 0.1f, 0.5f, 0.15f)), dev.kern.pdfbridge.PdfColour(1.0, 1.0, 0.0), dev.kern.pdfbridge.PdfDate.now())) }
+        await("the warning") { vm.editWarning != null }
+        onMain { vm.editWithoutCopy() }
+        waitForEdit()
+        onMain { vm.tapPage(0, PagePoint(0.3f, 0.125f), aspect, reach) }
+        await("the highlight to be chosen") { vm.selectedAnnotation != null }
+        assertEquals(PdfAnnotationKind.Highlight, vm.selectedAnnotation!!.annotation.kind)
+        assertEquals("Add note", AnnotationSelectionModel.noteChipLabel(vm.selectedAnnotation!!.annotation))
+
+        onMain { vm.editSelectedNoteText() }
+        assertEquals("", (vm.noteRequest as PdfEditorViewModel.NoteRequest.Change).initial)
+        onMain { vm.commitNoteText("because it matters") }
+        await("the note") { !vm.editBusy && vm.selectedAnnotation?.annotation?.contents == "because it matters" }
+        assertEquals(PdfAnnotationKind.Highlight, vm.selectedAnnotation!!.annotation.kind)
+        assertEquals("Edit note", AnnotationSelectionModel.noteChipLabel(vm.selectedAnnotation!!.annotation))
+        onMain { vm.undo() }
+        await("the undo") { !vm.editBusy }
+        assertNull("one undo takes the note off", runBlocking { vm.annotationsOf(0) }.single().contents)
+    }
 }

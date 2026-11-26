@@ -10,7 +10,7 @@ inputs:
     default: verycareful/kernkraft
   kernkraft-ref:
     description: Release tag of kernkraft to build from.
-    default: 0.2.2.0
+    default: 0.2.3.0
   abis:
     description: Space-separated cargo-ndk ABIs to build.
     default: arm64-v8a armeabi-v7a x86_64

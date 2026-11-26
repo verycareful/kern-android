@@ -95,13 +95,36 @@ class AnnotationSelectionModelTest {
     }
 
     @Test
-    fun ink_moves_but_a_markup_does_not_and_neither_has_text_to_edit() {
+    fun ink_moves_but_a_markup_does_not_and_ink_has_no_text_to_edit() {
         val ink = AnnotationSelectionModel.actionsOf(annotation(PdfAnnotationKind.Ink))
         assertTrue(ink.recolour && ink.move && ink.delete)
         assertFalse(ink.editText)
         val highlight = AnnotationSelectionModel.actionsOf(annotation(PdfAnnotationKind.Highlight))
         assertTrue(highlight.recolour && highlight.delete)
-        assertFalse(highlight.move || highlight.editText)
+        assertFalse(highlight.move)
+    }
+
+    @Test
+    fun a_highlight_an_underline_and_a_strikeout_can_carry_a_note() {
+        for (kind in listOf(PdfAnnotationKind.Highlight, PdfAnnotationKind.Underline, PdfAnnotationKind.StrikeOut)) {
+            assertTrue("$kind", AnnotationSelectionModel.actionsOf(annotation(kind)).editText)
+        }
+    }
+
+    @Test
+    fun a_mark_whose_text_is_locked_or_that_has_no_name_takes_no_note() {
+        val locked = annotation(PdfAnnotationKind.Highlight, flags = 4L or (1L shl 9))
+        assertFalse(AnnotationSelectionModel.actionsOf(locked).editText)
+        assertEquals("The text of this highlight is locked in the file.", AnnotationSelectionModel.actionsOf(locked).limit)
+        assertFalse(AnnotationSelectionModel.actionsOf(annotation(PdfAnnotationKind.Underline, id = null)).editText)
+    }
+
+    @Test
+    fun the_chip_says_add_note_for_a_mark_with_none_and_edit_for_one_that_has_text() {
+        assertEquals("Edit text", AnnotationSelectionModel.noteChipLabel(annotation(PdfAnnotationKind.Note)))
+        assertEquals("Add note", AnnotationSelectionModel.noteChipLabel(annotation(PdfAnnotationKind.Highlight)))
+        assertEquals("Add note", AnnotationSelectionModel.noteChipLabel(annotation(PdfAnnotationKind.Highlight, contents = "  ")))
+        assertEquals("Edit note", AnnotationSelectionModel.noteChipLabel(annotation(PdfAnnotationKind.StrikeOut, contents = "why")))
     }
 
     @Test

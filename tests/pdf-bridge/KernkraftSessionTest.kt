@@ -322,6 +322,22 @@ class KernkraftSessionTest {
         assertEquals(9L, json.getLong("revision"))
         assertEquals("New words", json.getString("text"))
         assertFalse(json.has("family") || json.has("size") || json.has("colour"))
+        assertFalse(json.has("left") || json.has("width"))
+    }
+
+    @Test
+    fun a_text_edit_sends_the_left_edge_and_the_width_only_when_they_are_set() {
+        val both = PdfOp.EditText(0, 3, 5, "x", left = 0.1, width = 0.5).toJson()
+        assertEquals(0.1, both.getDouble("left"), 0.0)
+        assertEquals(0.5, both.getDouble("width"), 0.0)
+
+        val widthOnly = PdfOp.EditText(0, 3, 5, "x", width = 0.4).toJson()
+        assertEquals(0.4, widthOnly.getDouble("width"), 0.0)
+        assertFalse(widthOnly.has("left"))
+
+        val leftOnly = PdfOp.EditText(0, 3, 5, "x", left = 0.2).toJson()
+        assertEquals(0.2, leftOnly.getDouble("left"), 0.0)
+        assertFalse(leftOnly.has("width"))
     }
 
     @Test

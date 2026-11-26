@@ -305,4 +305,66 @@ class PdfEditorTextEditInstrumentedTest {
         assertFalse(vm.dirty)
         assertEquals("the page keeps its text", listOf("page 1"), texts())
     }
+
+    private val long = "one two three four five six seven eight nine ten eleven twelve"
+
+    private fun lineCount(): Int = blocks().single().lineCount
+
+    @Test
+    fun a_tap_outside_the_open_field_keeps_what_was_typed_and_opens_no_other_field() {
+        openBlock()
+        onMain { vm.changeTextDraft("page 9"); vm.tapTextBlock(0, PagePoint(0.9f, 0.9f)) }
+        await("the warning") { vm.editWarning != null }
+        onMain { vm.editWithoutCopy() }
+        await("the edit") { vm.dirty && !vm.editBusy && vm.textEdit == null }
+        assertNull(vm.newText)
+        assertEquals(listOf("page 9"), texts())
+    }
+
+    @Test
+    fun a_tap_outside_an_untouched_field_just_closes_it() {
+        openBlock()
+        onMain { vm.tapTextBlock(0, PagePoint(0.9f, 0.9f)) }
+        assertNull(vm.textEdit)
+        assertNull(vm.newText)
+        assertFalse(vm.dirty)
+    }
+
+    @Test
+    fun a_block_set_in_a_wider_box_keeps_a_long_text_on_fewer_lines() {
+        openBlock()
+        onMain { vm.resizeTextEdit(0.2f); vm.changeTextDraft(long) }
+        change(long)
+        val narrow = lineCount()
+
+        openBlock()
+        onMain { vm.resizeTextEdit(0.8f) }
+        assertEquals(0.8f, vm.textEdit!!.width!!, 1e-4f)
+        change(long)
+        assertTrue("narrow $narrow, wide ${lineCount()}", narrow > lineCount())
+    }
+
+    @Test
+    fun moving_a_block_sideways_is_an_edit_though_the_words_are_the_same() {
+        openBlock()
+        val before = blocks().single().box
+        onMain { vm.moveTextEditBy(0.3f) }
+        assertEquals(before.left + 0.3f, vm.textEdit!!.left!!, 1e-4f)
+        onMain { vm.commitTextEdit() }
+        await("the warning") { vm.editWarning != null }
+        onMain { vm.editWithoutCopy() }
+        await("the edit") { vm.dirty && !vm.editBusy && vm.textEdit == null }
+        assertEquals(before.left + 0.3f, blocks().single().box.left, 0.02f)
+        assertEquals(listOf("page 1"), texts())
+    }
+
+    @Test
+    fun a_box_dragged_back_to_where_it_was_sends_nothing() {
+        openBlock()
+        onMain { vm.moveTextEditBy(0.2f); vm.moveTextEditBy(-0.2f) }
+        assertNull(vm.textEdit!!.left)
+        onMain { vm.commitTextEdit() }
+        assertNull(vm.textEdit)
+        assertFalse(vm.dirty)
+    }
 }

@@ -159,4 +159,25 @@ class TextEditModelTest {
         assertEquals("Arial", TextEditModel.fontLabel(font))
         assertEquals(TextEditModel.EMPTY_PAGE_FACE, TextEditModel.fontLabel(null))
     }
+
+    @Test
+    fun a_box_is_kept_on_the_page_whichever_way_it_is_moved() {
+        assertEquals(0f, TextEditModel.clampLeft(-0.2f, 0.4f), 0f)
+        assertEquals(0.3f, TextEditModel.clampLeft(0.3f, 0.4f), 1e-6f)
+        assertEquals(0.6f, TextEditModel.clampLeft(0.9f, 0.4f), 1e-6f)
+        assertEquals(0f, TextEditModel.clampLeft(0.5f, 1.2f), 0f)
+    }
+
+    @Test
+    fun a_box_dragged_back_to_where_the_block_stands_sends_nothing() {
+        assertEquals(null, TextEditModel.changedOrNull(0.3f, 0.3f))
+        assertEquals(null, TextEditModel.changedOrNull(0.3004f, 0.3f))
+        assertEquals(0.35f, TextEditModel.changedOrNull(0.35f, 0.3f))
+    }
+
+    @Test
+    fun a_text_drawn_as_pictures_of_letters_is_said_so_in_plain_words() {
+        val said = TextEditModel.refusal("Type3Font")
+        assertTrue(said, said.contains("Type 3") && said.contains("pictures of letters"))
+    }
 }
