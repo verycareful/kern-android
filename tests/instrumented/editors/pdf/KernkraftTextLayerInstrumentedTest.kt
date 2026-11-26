@@ -37,7 +37,8 @@ class KernkraftTextLayerInstrumentedTest {
         val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
         dir = File(cache, "text-layer-test").apply { deleteRecursively(); mkdirs() }
         val pdf = File(dir, "linked.pdf").apply { writeBytes(linkedPdf()) }
-        session = PdfEditSession.create(File(dir, "session"), FileDocumentTarget(pdf)) { "D:20261125120000+05'30'" }
+        // The session gets a folder of its own: a session deletes every entry beside it that no open session holds.
+        session = PdfEditSession.create(File(dir, "sessions/session"), FileDocumentTarget(pdf)) { "D:20261125120000+05'30'" }
         layer = session.textLayer(dispatcher)
     }
 

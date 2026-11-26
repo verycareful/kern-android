@@ -1,5 +1,5 @@
 name: Feature request
-description: Something Kern should do that it does not.
+description: Something Kern Android should do that it does not.
 labels: ["enhancement"]
 body:
   - type: markdown

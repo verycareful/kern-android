@@ -46,6 +46,8 @@ class PdfEditSession private constructor(
     private val now: () -> String,
     /** Why the engine has no system fonts to set text in, or null when it has them; text can still be changed in the fonts a page holds. */
     val fontsProblem: String?,
+    /** The names of working copies left by earlier sessions that could not be deleted; empty when none were. */
+    val leftovers: List<String>,
 ) : Closeable {
 
     /** Set when `view.pdf` may not hold the disk bytes it should; the next rebuild reads them again. */
@@ -221,6 +223,7 @@ class PdfEditSession private constructor(
     override fun close() {
         engine.close()
         dir.deleteRecursively()
+        SessionFolders.close(dir)
     }
 
     /** Cuts `view.pdf` back to [length] bytes; a file already shorter is an error, never padded. */
@@ -245,15 +248,17 @@ class PdfEditSession private constructor(
          * [now] gives the PDF date a save carries.
          */
         fun create(dir: File, target: DocumentTarget, now: () -> String): PdfEditSession {
-            dir.mkdirs()
+            val leftovers = SessionFolders.open(dir)
             val sessionFile = File(dir, SESSION_NAME)
             try {
+                if (!dir.mkdirs() && !dir.isDirectory) throw IOException("Could not make the working folder.")
                 val stamp = copyStamped(target.openRead(), sessionFile)
                 sessionFile.copyTo(File(dir, VIEW_NAME), overwrite = true)
                 val fontsProblem = SystemFonts.register()
-                return PdfEditSession(dir, KernkraftSession.open(sessionFile), target, stamp, now, fontsProblem)
-            } catch (e: IOException) {
+                return PdfEditSession(dir, KernkraftSession.open(sessionFile), target, stamp, now, fontsProblem, leftovers)
+            } catch (e: Throwable) {
                 dir.deleteRecursively()
+                SessionFolders.close(dir)
                 throw e
             }
         }

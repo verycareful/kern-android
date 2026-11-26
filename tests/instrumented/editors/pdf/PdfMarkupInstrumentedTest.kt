@@ -45,7 +45,8 @@ class PdfMarkupInstrumentedTest {
         val cache = InstrumentationRegistry.getInstrumentation().targetContext.cacheDir
         dir = File(cache, "markup-test").apply { deleteRecursively(); mkdirs() }
         pdf = File(dir, "text.pdf").apply { writeBytes(textPdf()) }
-        session = PdfEditSession.create(File(dir, "session"), FileDocumentTarget(pdf)) { date }
+        // The session gets a folder of its own: a session deletes every entry beside it that no open session holds.
+        session = PdfEditSession.create(File(dir, "sessions/session"), FileDocumentTarget(pdf)) { date }
     }
 
     @After

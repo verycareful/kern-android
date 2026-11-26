@@ -38,8 +38,11 @@ class PdfEditSessionInstrumentedTest {
         dir.deleteRecursively()
     }
 
+    /** The sessions' own folder: a session deletes every entry beside it that no open session holds, so the test's PDFs live outside it. */
+    private val sessions get() = File(dir, "sessions")
+
     private fun session(target: DocumentTarget = FileDocumentTarget(original)): PdfEditSession =
-        PdfEditSession.create(File(dir, "session-${opened.size}"), target, { "D:20261125120000+05'30'" }).also { opened += it }
+        PdfEditSession.create(File(sessions, "session-${opened.size}"), target, { "D:20261125120000+05'30'" }).also { opened += it }
 
     private val nothing = {}
 
@@ -174,7 +177,7 @@ class PdfEditSessionInstrumentedTest {
         s.apply(PdfOp.Rotate(listOf(0), 90), nothing)
         val outcome = s.save(nothing)
         assertTrue(outcome.toString(), outcome is PdfEditSession.SaveOutcome.Damaged)
-        assertTrue(File(dir, "session-0").resolve("view.pdf").length() >= originalBytes.size)
+        assertTrue(File(sessions, "session-0").resolve("view.pdf").length() >= originalBytes.size)
     }
 
     /** A provider whose append fails before anything is written. */

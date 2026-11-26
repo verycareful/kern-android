@@ -102,9 +102,9 @@ private const val A4_PORTRAIT_RATIO = 1.414f
 private val PageVerticalGap = 12.dp
 
 /**
- * PDF viewer: paged, pinch-zoomable rendering via the framework [PdfDocument].
- * Read-only; the page tools run through the kernkraft engine. Save is disabled;
- * Export writes a verbatim copy.
+ * PDF editor: paged, pinch-zoomable pages drawn by the kernkraft engine, with find,
+ * marking, ink, notes, text editing and the page tools. Save appends the edits to the
+ * file; Export writes a copy of the document as it stands.
  */
 @Composable
 fun PdfEditorScreen(
@@ -184,9 +184,9 @@ fun PdfEditorScreen(
 
 /**
  * The actions button of the top bar and the drop-down it opens, anchored to the top-right
- * corner. The same button closes it again. Each editing feature adds its own rows here as it
- * lands; for now: Find, the marking and text tools, Tools (organise pages, merge, extract), Save
- * compacted copy, and Edit a repaired copy for a file that cannot be edited in place.
+ * corner. The same button closes it again. Each editing feature has its own rows: Find, the marking
+ * and text tools, Tools (organise pages, merge, extract), Save compacted copy, and Edit a repaired
+ * copy for a file that cannot be edited in place.
  */
 @Composable
 private fun PdfActionsMenu(

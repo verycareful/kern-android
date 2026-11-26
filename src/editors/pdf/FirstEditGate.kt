@@ -22,7 +22,7 @@ sealed interface CopyDestination {
 data class EditWarning(val destination: CopyDestination, val problem: String? = null)
 
 /**
- * The warning before the first edit of an open PDF (D6): editing may change the file, so the user
+ * The warning before the first edit of an open PDF: editing may change the file, so the user
  * is offered a copy of the untouched file first. The edit waits until the user decides, and a
  * copy that fails or is cancelled never lets the edit through.
  *

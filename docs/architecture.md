@@ -14,11 +14,11 @@ Kern is a single-Activity Android app built with Kotlin and Jetpack Compose. It 
 | Excel editor | `src/editors/excel/` | Apache POI xlsx |
 | Word editor | `src/editors/word/` | Apache POI docx |
 | PowerPoint editor | `src/editors/pptx/` | Apache POI pptx |
-| PDF editor | `src/editors/pdf/` | Compose PDF UI |
+| PDF editor | `src/editors/pdf/` | Compose PDF viewer and editor: pages, annotations, text |
 | EPUB reader | `src/editors/epub/` | jsoup-backed chapter text editing |
 | Text and Markdown editor | `src/editors/text/` | Raw source editor for `.md`, `.txt`, `.rst`, `.org`; Markdown toolbar and syntax colouring |
 | Markdown preview | `src/editors/markdown/` | commonmark-java renderer and the offline WebView preview |
-| PDF bridge | `src/pdf-bridge/` | Native PDF bridge (JNI/NDK) |
+| PDF bridge | `src/pdf-bridge/` | JNI bridge to the kernkraft PDF engine |
 | Shared | `src/shared/` | Compose theme, common components, file utilities |
 
 ## Navigation
@@ -47,7 +47,11 @@ External "Open with" intents bypass FileBrowser and land directly on the correct
 
 ## PDF bridge
 
-PDF rendering is delegated to a native engine through a JNI/NDK bridge declared in `src/pdf-bridge/`. The Kotlin side exposes a small handle-based surface (open, page count, render, close); the native library is loaded at runtime.
+Every PDF feature goes through kernkraft, a Rust PDF library, over the JNI bridge in `src/pdf-bridge/`. `KernkraftSession` is a handle-based surface: open, render a page, read its text, links, blocks, fonts and annotations, apply an edit, undo and redo, append the edits to the file, and write a compacted copy. Each call is one JSON request and one JSON answer.
+
+An open PDF is a `PdfEditSession` (`src/editors/pdf/PdfEditSession.kt`): a private copy of the document in the cache that the engine reads, and the working file the page view draws from. Saving appends an incremental update to the user's file, so its original bytes are never rewritten. A session's folder is deleted when it closes; folders that no open session holds, left by a process that ended, are deleted when the next session starts (`SessionFolders`).
+
+Android's own PDF renderer supplies the page count at open and page widths, and draws the pages of a file kernkraft cannot open.
 
 ## Markdown preview
 

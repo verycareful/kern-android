@@ -14,8 +14,9 @@ import kotlin.math.roundToInt
 /**
  * Read-only PDF page source backed by the framework [PdfRenderer].
  *
- * Viewing needs ZERO native code: Android renders PDFs itself. The kernkraft
- * engine supplies the text and the edits; this class draws the pages.
+ * The kernkraft engine draws the pages, reads the text and makes the edits. This
+ * class gives the page count at open and the page widths, and draws the pages
+ * only when the engine cannot open the file.
  *
  * [PdfRenderer] is not thread-safe and only one page may be open at a time, so
  * every render is serialized on [lock]. Always [close] to release the fd.

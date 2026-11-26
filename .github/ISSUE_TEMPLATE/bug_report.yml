@@ -1,5 +1,5 @@
 name: Bug report
-description: Something in Kern does not work as it should.
+description: Something in Kern Android does not work as it should.
 labels: ["bug"]
 body:
   - type: markdown

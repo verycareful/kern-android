@@ -48,9 +48,10 @@ import java.io.IOException
 import java.util.UUID
 
 /**
- * PDF viewer state: opens a PDF and pages through it read-only via the framework
- * [PdfDocument]. The page tools (merge, extract) run through the kernkraft native
- * engine, [KernkraftPdf]. Export writes a verbatim copy.
+ * PDF editor state: opens a PDF in a [PdfEditSession] on the kernkraft engine, which
+ * draws its pages, reads its text and applies each edit as one undo step. The page
+ * tools (merge, extract) run through [KernkraftPdf]. Export writes a copy of the
+ * document as it stands, edits included.
  */
 class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
 
@@ -558,7 +559,10 @@ class PdfEditorViewModel(app: Application) : AndroidViewModel(app), FindTarget {
         sessionDir,
         ContentDocumentTarget.forUri(getApplication(), uri ?: throw IOException("No file was provided.")),
         PdfDate::now,
-    ).also { session = it }
+    ).also {
+        session = it
+        if (it.leftovers.isNotEmpty()) toolMessage = SessionFolders.leftoverMessage(it.leftovers)
+    }
 
     /**
      * Opens the engine session in the background once the PDF is showing, so that find, selection and

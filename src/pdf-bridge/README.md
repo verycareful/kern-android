@@ -18,7 +18,9 @@ JSON object in and one JSON object out; `crates/kernkraft-pdf-engine/src/` in ke
 holds the request types, and requests with unknown fields are refused.
 
 The native code is the only one in the app: every other format is pure Kotlin/JVM.
-Viewing a PDF needs no native code either, because Android renders PDFs itself.
+kernkraft draws every PDF page Kern shows, and reads its text, links and annotations.
+Android's own PDF renderer is used only for the page count at open, for page widths, and
+to show the pages of a file kernkraft cannot open.
 
 ## Building the .so
 
