@@ -2,6 +2,44 @@
 
 All notable changes documented here. Format: [Keep a Changelog](https://keepachangelog.com/), with one deviation: dated release entries are timestamped to the minute with timezone (`YYYY-MM-DD HH:MM (TZ)`).
 
+## [0.2.0.0] - 2026-11-27 10:42 IST
+
+### Added
+- **PDF Editor** (closes #33): PDFs are now edited in place, not only viewed. Every PDF feature now runs on [kernkraft](https://github.com/verycareful/kernkraft), a Rust PDF library, through the JNI bridge in `src/pdf-bridge/`. Edits are appended to the file as an incremental update, so the bytes already in the file are never rewritten
+  - **Actions Menu**: the PDF top bar holds Find, Tools, Save compacted copy and one row per editing mode; Undo and Redo appear beside it once there is an edit. Every action is one undo step
+  - **First-Edit Warning**: the first edit of a file asks first ("Editing changes this file"), with Save a copy first, Edit without a copy and Cancel. A copy is saved as `<name> (original).pdf`, never over an existing file
+  - **Save**: the edits are appended to the file, read back and checked before they count as saved. A file changed by another app since it was opened is not written over; a provider that truncates instead of appending is put back from Kern's working copy, and Kern says so if it cannot be. Export a copy writes the edited state
+  - **Organise Pages** (Tools): a thumbnail grid of the document. Tap to select; press, hold and drag to move a page; rotate left or right and delete act on the selection. Delete asks first and is refused when every page is selected
+  - **Mark Up Text**: highlight, underline or strike out text. Press and hold, then drag; both ends of the selection have handles. Colours for each kind
+  - **Draw**: freehand ink with a choice of colour and width. One finger draws; a second finger leaves the stroke and pans or zooms. Strokes drawn while an edit is running go in right after it, each its own undo step
+  - **Notes**: tap an empty place to add a note, tap a note to open and edit it. A highlight, underline or strikeout can also carry a note
+  - **Annotation Selection**: tap an annotation to choose it, then recolour, move (drag it), change its text or delete it from the bar at the foot of the page. Form fields and links are never chosen (a link tap still follows the link); an annotation the file locks can be read but not changed, and the bar says why
+  - **Edit Page Text**: tap text on a page to change it in a field laid over it, then Apply, Remove text or Cancel. A paragraph whose lines wrap is edited as one paragraph. Both sides of the box can be dragged: the left side moves it, the right side sets its width. A tap outside the field applies what was typed. Letters the page's font lacks are drawn with a font from the device, and Kern says which font was used. Text Kern cannot change safely (drawn as pictures of letters by a Type 3 font, vertical, part of a tagged form, and others) is outlined differently and a tap says why
+  - **New Text on a Page**: in Edit page text, tap an empty place to add text. The box is as wide as the page's text column and its width can be dragged, snapping to the widths of the page's paragraphs; chips choose one of the page's fonts and a size (8 to 36 pt, 12 pt on a page with no text)
+  - **Repaired Copy**: a damaged PDF that can be read only by rebuilding its index cannot be edited in place without risk, so an edit offers to save a repaired copy as a new file and open it for editing. The damaged file is not changed. Save compacted copy works on such a file too
+- `docs/architecture.md`: the PDF editor, the edit session, incremental save and the bridge
+
+### Changed
+- **PDF Pages**: kernkraft draws every page, so annotations and ink show on every supported Android version. The system's PDF renderer is used only when kernkraft cannot open the file
+- **PDF Find, Text Selection and Links**: they now work on every supported Android version, not only Android 15 and later. The text is read once the document is showing; find says "Getting the text ready" until then, and names the pages whose text could not be read
+- **Editor Titles**: the title in every editor's top bar is one line that scrolls sideways instead of ending in an ellipsis
+- **Keyboard**: the window resizes to the space the keyboard leaves instead of panning, so the top bar stays on screen and a field at the foot of a page stays in view
+- **Merge and Extract**: their output always gets a new name and never replaces a file; Extract refuses a range past the last page
+- **Settings and Notices**: the PDF engine row names kernkraft; the notices list kernkraft, its bundled material and the Rust crates linked into it
+- The repository is now [verycareful/kern-android](https://github.com/verycareful/kern-android), and the product is called Kern Android
+
+### Fixed
+- **PDF Working Copies**: working copies a crash left in Kern's cache are deleted when the next PDF opens
+
+### Tests
+- **Bridge** (`KernkraftPdfTest.kt`, `KernkraftSessionTest.kt`, `PdfDateTest.kt`): answers parsed, each edit's wire form, pages, text lines and blocks, wrapped and ended lines, search, links, annotations with their flags, page fonts, PDF dates
+- **Editing Rules**: `FirstEditGateTest.kt`, `OriginalCopyTest.kt`, `FileStampTest.kt`, `OrganisePagesModelTest.kt`, `TextMarkupModelTest.kt`, `AnnotationSelectionModelTest.kt`, `TextEditModelTest.kt`, `SystemFontsTest.kt`, `SessionFoldersTest.kt`, `PdfRangeSpecTest.kt`, `UnreadPagesMessageTest.kt`
+- **On a Device** (`tests/instrumented/`): the bridge on real native libraries; the edit session's save, including providers that truncate, cannot be put back or have no append mode, and a file changed outside; organising pages; the text layer; marking, ink and their undo; notes and annotation selection, including links, form fields, stamps and locked notes; text editing and new text; the repaired copy; marking after a zoom; whole-screen tests of the bars, fields and gestures
+
+### Results
+- 520 tests across 47 suites, all passed (10s, local Gradle `testDebugUnitTest`); lint: no errors
+- 151 instrumented tests across 22 classes, all passed (79s, Android 16 (API 36) x86_64 emulator, `connectedDebugAndroidTest`)
+
 ## [0.1.14.3] - 2026-11-03 18:47 IST
 
 ### Fixed

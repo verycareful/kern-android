@@ -3,34 +3,28 @@
 </p>
 
 # Kern Android
-
-<!-- Language & platform -->
 [![Kotlin](https://img.shields.io/badge/Kotlin-2.0.21-7F52FF?style=flat-square&logo=kotlin&logoColor=white)](https://kotlinlang.org/)
 [![Java](https://img.shields.io/badge/Java-17-ED8B00?style=flat-square&logo=openjdk&logoColor=white)](https://openjdk.org/)
 [![Android](https://img.shields.io/badge/Android-8.0+-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/)
-<!-- UI -->
 [![Jetpack Compose](https://img.shields.io/badge/Jetpack%20Compose-BOM%202026.05.01-4285F4?style=flat-square&logo=jetpackcompose&logoColor=white)](https://developer.android.com/jetpack/compose)
 [![Material 3](https://img.shields.io/badge/Material%203-757575?style=flat-square&logo=materialdesign&logoColor=white)](https://m3.material.io/)
 [![Navigation Compose](https://img.shields.io/badge/Navigation%20Compose-2.8.3-4285F4?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/jetpack/compose/navigation)
-<!-- Build & libraries -->
 [![Gradle](https://img.shields.io/badge/Gradle-8.10.2-02303A?style=flat-square&logo=gradle&logoColor=white)](https://gradle.org/)
 [![AGP](https://img.shields.io/badge/Android%20Gradle%20Plugin-8.7.2-3DDC84?style=flat-square&logo=android&logoColor=white)](https://developer.android.com/build/releases/gradle-plugin)
 [![Apache POI](https://img.shields.io/badge/Apache%20POI-5.5.1-D22128?style=flat-square&logo=apache&logoColor=white)](https://poi.apache.org/)
 [![OpenCSV](https://img.shields.io/badge/OpenCSV-5.12.0-08427B?style=flat-square)](https://opencsv.sourceforge.net/)
 [![jsoup](https://img.shields.io/badge/jsoup-1.23.2-1D9BF0?style=flat-square)](https://jsoup.org/)
 [![commonmark-java](https://img.shields.io/badge/commonmark--java-0.30.1-000000?style=flat-square&logo=markdown&logoColor=white)](https://github.com/commonmark/commonmark-java)
-<!-- Markdown preview (bundled under assets/preview) -->
-<!-- KaTeX, elkjs and highlight.js have no shields.io logos. Swap these plain badges for logo badges if logos become available. -->
 [![KaTeX](https://img.shields.io/badge/KaTeX-0.19.0-329894?style=flat-square)](https://katex.org/)
 [![Mermaid](https://img.shields.io/badge/Mermaid-12.2.0-FF3670?style=flat-square&logo=mermaid&logoColor=white)](https://mermaid.js.org/)
 [![elkjs](https://img.shields.io/badge/elkjs-0.12.1-2C5F8A?style=flat-square)](https://github.com/kieler/elkjs)
 [![highlight.js](https://img.shields.io/badge/highlight.js-11.12.0-2F3337?style=flat-square)](https://highlightjs.org/)
-<!-- PDF engine -->
 [![kernkraft](https://img.shields.io/badge/kernkraft-0.2.4.0-DEA584?style=flat-square&logo=rust&logoColor=white)](https://github.com/verycareful/kernkraft)
-<!-- Project -->
 [![Version](https://img.shields.io/github/v/tag/verycareful/kern-android?style=flat-square&label=version&color=3F5B8B&sort=date)](https://github.com/verycareful/kern-android/tags)
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-A42E2B?style=flat-square)](LICENSE)
 [![Status: Active](https://img.shields.io/badge/Status-Active-brightgreen?style=flat-square)](.)
+
+<!-- OpenCSV, jsoup, KaTeX, elkjs and highlight.js have no shields.io logos. Swap these plain badges for logo badges if logos become available. -->
 
 A privacy-first, fully offline, open-source Android document toolkit.
 No cloud sync. No data collection. No network access. Completely free. AGPL-3.0.
