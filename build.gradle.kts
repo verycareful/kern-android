@@ -19,8 +19,8 @@ android {
         applicationId = "dev.kern"
         minSdk = 26
         targetSdk = 35
-        versionCode = 36
-        versionName = "0.1.14.3"
+        versionCode = 37
+        versionName = "0.1.14.3.12"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables.useSupportLibrary = true
         ndk {
@@ -48,8 +48,9 @@ android {
     }
     // List unit dirs explicitly so tests/instrumented (androidTest) is not also
     // compiled as a unit test, which lacks the instrumented + compose-test deps.
-    sourceSets["test"].java.srcDirs("tests/editors", "tests/settings", "tests/shared")
+    sourceSets["test"].java.srcDirs("tests/editors", "tests/pdf-bridge", "tests/settings", "tests/shared")
     sourceSets["androidTest"].java.srcDirs("tests/instrumented")
+    sourceSets["androidTest"].assets.srcDirs("tests/instrumented/assets")
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

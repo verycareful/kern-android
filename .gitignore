@@ -40,9 +40,6 @@ local/
 # font sources, uploads of local/), never sources. Keep them in local/.
 /*.zip
 
-# Qyra checkout (separate repo / its own git remote). We work on it here and PR
-# from the fork; Kern must not track it.
-/qyra/
 # Claude working memory: stays on disk (auto-loaded each session) but is not
 # published, since it references the internal roadmap.
 CLAUDE.md

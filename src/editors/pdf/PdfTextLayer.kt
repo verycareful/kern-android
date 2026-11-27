@@ -12,23 +12,11 @@ data class PagePoint(val x: Float, val y: Float)
 /** One match of a search: the page it is on and the boxes covering its text (one per line it spans). */
 data class PdfTextMatch(val page: Int, val rects: List<PageRect>)
 
-/** One line of a page's text and the box it is drawn in. */
-data class PdfTextLine(val text: String, val rect: PageRect)
-
 /**
- * Pairs a page's text with the line boxes the renderer reports for it. When there is one
- * box per line they are paired line by line; otherwise the whole text gets one box
- * covering every line, so it can still be selected, if less exactly.
+ * One line of a page's text and the box it is drawn in. [glyphs] are the boxes of its glyphs in
+ * logical order (not left to right); markup is made from them.
  */
-fun pairLines(text: String, boxes: List<PageRect>): List<PdfTextLine> {
-    if (text.isBlank() || boxes.isEmpty()) return emptyList()
-    val lines = text.split('\n')
-    if (lines.size == boxes.size) {
-        return lines.zip(boxes).filter { it.first.isNotBlank() }.map { (line, box) -> PdfTextLine(line, box) }
-    }
-    val union = PageRect(boxes.minOf { it.left }, boxes.minOf { it.top }, boxes.maxOf { it.right }, boxes.maxOf { it.bottom })
-    return listOf(PdfTextLine(text, union))
-}
+data class PdfTextLine(val text: String, val rect: PageRect, val glyphs: List<PageRect> = emptyList())
 
 /** A link on a page: the boxes that take a tap, and where it goes. */
 sealed interface PdfLink {
@@ -47,20 +35,16 @@ fun List<PdfLink>.at(point: PagePoint): PdfLink? = firstOrNull { link ->
 }
 
 /**
- * What Kern can do with a PDF's text, as opposed to its pictures of pages. The framework
- * renderer provides it from Android 15 on; another PDF engine can provide the same
- * calls without the screens changing.
+ * What Kern can do with a PDF's text, as opposed to its pictures of pages. Pages are 0-based.
+ * Every call runs wherever the layer needs it to, so callers may call from any dispatcher.
  */
 interface PdfTextLayer {
     /** Every match of [query] on [page], in reading order. The search is literal and ignores case. */
-    fun search(page: Int, query: String): List<PdfTextMatch>
+    suspend fun search(page: Int, query: String): List<PdfTextMatch>
 
     /** The text of [page], line by line, with where each line is drawn. */
-    fun lines(page: Int): List<PdfTextLine>
+    suspend fun lines(page: Int): List<PdfTextLine>
 
-    /** Every link on [page]: links out of the document, then links within it. */
-    fun links(page: Int): List<PdfLink>
+    /** Every link on [page] that goes somewhere. */
+    suspend fun links(page: Int): List<PdfLink>
 }
-
-/** Why a PDF has no text layer on this device, for the find bar to show. */
-const val PDF_TEXT_NEEDS_ANDROID_15 = "Searching PDFs needs Android 15 or later"

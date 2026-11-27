@@ -4,7 +4,7 @@
 
 Report it privately through GitHub: open the repository's **Security** tab and choose
 **Report a vulnerability**, or go to
-<https://github.com/verycareful/kern/security/advisories/new>. Do not open a public
+<https://github.com/verycareful/kern-android/security/advisories/new>. Do not open a public
 issue, pull request or discussion about it.
 
 Include the Kern version (Settings > About > Version), the Android version and

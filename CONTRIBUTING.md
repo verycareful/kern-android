@@ -1,4 +1,4 @@
-# Contributing to Kern
+# Contributing to Kern Android
 
 Bug reports, fixes, features, tests and documentation are all welcome. This file
 covers how to report a problem, how to send a change, and the rules a change has to
@@ -6,9 +6,9 @@ meet before it is merged.
 
 ## Licence
 
-Kern is licensed under AGPL-3.0, and contributions are accepted under the same
+Kern Android is licensed under AGPL-3.0, and contributions are accepted under the same
 licence: inbound equals outbound. By opening a pull request you agree that your
-change is released under AGPL-3.0 as part of Kern, and you confirm that you have
+change is released under AGPL-3.0 as part of Kern Android, and you confirm that you have
 the right to submit it. You keep the copyright on what you wrote.
 
 Code copied from another project has to come under a licence compatible with
@@ -99,13 +99,13 @@ request whose author cannot answer for its contents is closed.
 
 ## Rules for code
 
-These hold everywhere in Kern. A change that breaks one is not merged.
+These hold everywhere in Kern Android. A change that breaks one is not merged.
 
-- **No network.** Kern has zero network permissions and makes no network requests:
+- **No network.** Kern Android has zero network permissions and makes no network requests:
   no analytics, telemetry, crash reporting, font or script loading from the web.
   Everything works offline. A web link in a document opens in another app, and only
   after the user confirms.
-- **Files are edited in place.** Kern reads and writes a document where it lives and
+- **Files are edited in place.** Kern Android reads and writes a document where it lives and
   keeps no app folder of copies.
 - **No `java.awt` on Android.** Android has no `java.awt.geom`. An Apache POI call
   that returns or builds a `Rectangle2D`, `Dimension` or `Point2D` (for example

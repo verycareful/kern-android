@@ -1,5 +1,6 @@
 package dev.kern.editors.pdf
 
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -25,6 +27,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
@@ -33,6 +38,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -81,12 +87,10 @@ import dev.kern.shared.ui.FastScrollBox
 import dev.kern.shared.ui.GoToPageDialog
 import dev.kern.shared.ui.rememberFastScrollTarget
 import dev.kern.shared.ui.EditorChrome
-import dev.kern.shared.ui.EditorToolbar
+import dev.kern.shared.ui.KernIconButton
 import dev.kern.shared.ui.KernBottomSheet
 import dev.kern.shared.ui.KernIcons
 import dev.kern.shared.ui.SheetActionRow
-import dev.kern.shared.ui.ToolbarButton
-import dev.kern.shared.ui.ToolbarSeparator
 import dev.kern.shared.ui.pinchZoom
 import dev.kern.shared.ui.rememberZoomState
 import kotlin.math.roundToInt
@@ -98,34 +102,75 @@ private const val A4_PORTRAIT_RATIO = 1.414f
 private val PageVerticalGap = 12.dp
 
 /**
- * PDF viewer (0.1.5.0 part A): paged, pinch-zoomable rendering via the framework
- * [PdfDocument]. Read-only for now; the Qyra-backed edit toolkit lands in later
- * 0.1.5.0 commits. Save is disabled; Export writes a verbatim copy.
+ * PDF editor: paged, pinch-zoomable pages drawn by the kernkraft engine, with find,
+ * marking, ink, notes, text editing and the page tools. Save appends the edits to the
+ * file; Export writes a copy of the document as it stands.
  */
 @Composable
 fun PdfEditorScreen(
     filePath: String?,
+    onOpenCopy: (Uri) -> Unit,
     vm: PdfEditorViewModel = viewModel(),
 ) {
     LaunchedEffect(filePath) { vm.start(filePath) }
     val hue = KernTheme.formatColor(DocumentFormat.PDF)
 
-    // Tools-sheet open state is lifted here so the bottom annotation toolbar (in the
-    // EditorChrome toolbar slot) can open the same sheet the pager layer renders.
+    // Tools-sheet open state is lifted here so the actions menu in the top bar can open the
+    // same sheet the pager layer renders.
     var toolsSheetOpen by remember { mutableStateOf(false) }
+
+    val compactLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(PDF_MIME),
+    ) { uri -> if (uri != null) vm.saveCompactedTo(uri) }
+    val copyLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(PDF_MIME),
+    ) { uri -> vm.copyPicked(uri) }
+    LaunchedEffect(vm.copyPickerRequest) { vm.copyPickerRequest?.let { copyLauncher.launch(it) } }
+    val repairLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.CreateDocument(PDF_MIME),
+    ) { uri -> if (uri != null) vm.saveRepairedCopy(uri) else vm.dismissRepairOffer() }
+    LaunchedEffect(vm.openCopy) { vm.openCopy?.let { vm.consumeOpenCopy(); onOpenCopy(it) } }
+
+    if (vm.repairOffer) {
+        RepairedCopyDialog(
+            onSave = { repairLauncher.launch(repairedCopyName(vm.fileName)) },
+            onCancel = vm::dismissRepairOffer,
+        )
+    }
+
+    vm.editWarning?.let { warning ->
+        FirstEditDialog(
+            warning = warning,
+            onCopyFirst = vm::chooseCopyFirst,
+            onWithoutCopy = vm::editWithoutCopy,
+            onCancel = vm::cancelEdit,
+        )
+    }
 
     EditorChrome(
         title = vm.fileName.ifBlank { "PDF" },
-        dirty = false,
+        dirty = vm.dirty,
         loading = vm.loading,
         error = vm.error,
         hue = hue,
-        onSave = { it(false, "PDF editing arrives later in 0.1.5.0; use Export to copy.") },
+        onSave = vm::save,
         exportMimeType = PDF_MIME,
         exportFileName = vm.fileName.ifBlank { "export.pdf" },
         onExportToUri = vm::exportTo,
-        toolbar = { PdfToolbar(onOpenTools = { toolsSheetOpen = true }) },
         find = vm,
+        showFindButton = false,
+        extraActions = {
+            if (vm.canUndo || vm.canRedo) {
+                KernIconButton(KernIcons.Undo, "Undo", onClick = vm::undo, enabled = vm.canUndo && !vm.editBusy)
+                KernIconButton(KernIcons.Redo, "Redo", onClick = vm::redo, enabled = vm.canRedo && !vm.editBusy)
+            }
+            PdfActionsMenu(
+                vm = vm,
+                onTools = { toolsSheetOpen = true },
+                onSaveCompactedCopy = { compactLauncher.launch(compactedCopyName(vm.fileName)) },
+                onEditRepairedCopy = { repairLauncher.launch(repairedCopyName(vm.fileName)) },
+            )
+        },
     ) { modifier ->
         PdfPager(
             vm = vm,
@@ -138,20 +183,134 @@ fun PdfEditorScreen(
 }
 
 /**
- * Bottom annotation toolbar. Select / Draw / Highlight / Add text are future
- * functional work on the Qyra-backed annotation model and stay disabled; Tools is
- * live and opens the page-tools sheet (merge / extract).
+ * The actions button of the top bar and the drop-down it opens, anchored to the top-right
+ * corner. The same button closes it again. Each editing feature has its own rows: Find, the marking
+ * and text tools, Tools (organise pages, merge, extract), Save compacted copy, and Edit a repaired
+ * copy for a file that cannot be edited in place.
  */
 @Composable
-private fun PdfToolbar(onOpenTools: () -> Unit) {
-    EditorToolbar {
-        ToolbarButton(KernIcons.Text, "Select", onClick = {}, label = "Select", enabled = false)
-        ToolbarButton(KernIcons.Pen, "Draw", onClick = {}, enabled = false)
-        ToolbarButton(KernIcons.Highlight, "Highlight", onClick = {}, enabled = false)
-        ToolbarButton(KernIcons.Text, "Add text", onClick = {}, enabled = false)
-        ToolbarSeparator()
-        ToolbarButton(KernIcons.Merge, "Page tools", onClick = onOpenTools, label = "Tools")
+private fun PdfActionsMenu(
+    vm: PdfEditorViewModel,
+    onTools: () -> Unit,
+    onSaveCompactedCopy: () -> Unit,
+    onEditRepairedCopy: () -> Unit,
+) {
+    val colors = KernTheme.colors
+    var expanded by remember { mutableStateOf(false) }
+    var closedAt by remember { mutableLongStateOf(0L) }
+    Box {
+        KernIconButton(
+            KernIcons.More,
+            if (expanded) "Close actions" else "Actions",
+            onClick = {
+                // A tap on the button while the menu is open is first a tap outside it, which closes
+                // the menu; that tap must not open it again.
+                if (expanded) expanded = false
+                else if (System.currentTimeMillis() - closedAt > REOPEN_GUARD_MS) expanded = true
+            },
+            active = expanded,
+        )
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false; closedAt = System.currentTimeMillis() },
+            containerColor = colors.surface,
+        ) {
+            ActionRow("Find", KernIcons.Search) { expanded = false; vm.find.open() }
+            ActionRow("Mark up text", KernIcons.Highlight, enabled = vm.canSelectText && !vm.editBusy) {
+                expanded = false
+                vm.startMarkup()
+            }
+            ActionRow("Draw", KernIcons.Pen, enabled = !vm.editBusy) { expanded = false; vm.startInk() }
+            ActionRow("Notes", KernIcons.Note, enabled = !vm.editBusy) { expanded = false; vm.startNote() }
+            ActionRow("Edit page text", KernIcons.Text, enabled = vm.canSelectText && !vm.editBusy) { expanded = false; vm.startTextEdit() }
+            ActionRow("Tools", KernIcons.Merge) { expanded = false; onTools() }
+            ActionRow("Save compacted copy", KernIcons.Save, enabled = !vm.editBusy) {
+                expanded = false
+                onSaveCompactedCopy()
+            }
+            if (vm.needsRepairedCopy) {
+                ActionRow("Edit a repaired copy", KernIcons.Text, enabled = !vm.editBusy) {
+                    expanded = false
+                    onEditRepairedCopy()
+                }
+            }
+        }
     }
+}
+
+@Composable
+private fun ActionRow(label: String, icon: androidx.compose.ui.graphics.vector.ImageVector, enabled: Boolean = true, onClick: () -> Unit) {
+    val colors = KernTheme.colors
+    DropdownMenuItem(
+        text = { Text(label, color = if (enabled) colors.text else colors.textDim) },
+        leadingIcon = { Icon(icon, contentDescription = null, tint = if (enabled) colors.accent else colors.textDim) },
+        onClick = onClick,
+        enabled = enabled,
+    )
+}
+
+private const val REOPEN_GUARD_MS = 250L
+
+/** The page indicator sits this far above the bottom edge while the marking bar is shown. */
+internal val ANNOTATE_BAR_CLEARANCE = 120.dp
+
+/**
+ * Says that this file cannot be edited in place and offers to save a repaired copy as a new file and edit
+ * that. The file itself is not changed either way.
+ */
+@Composable
+private fun RepairedCopyDialog(onSave: () -> Unit, onCancel: () -> Unit) {
+    val colors = KernTheme.colors
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = colors.surface,
+        title = { Text("Edit a repaired copy?") },
+        text = { Text(REPAIR_EXPLANATION) },
+        confirmButton = { TextButton(onClick = onSave) { Text("Save repaired copy", color = colors.accent) } },
+        dismissButton = { TextButton(onClick = onCancel) { Text("Cancel", color = colors.textMid) } },
+    )
+}
+
+internal const val REPAIR_EXPLANATION =
+    "This PDF is damaged: Kern had to rebuild its index of contents to read it, so changes cannot be added to it " +
+        "without risking the file. Kern can save a repaired copy as a new file and open the copy for editing. " +
+        "This file is not changed."
+
+/** The name the save picker suggests for a repaired copy of [fileName]. */
+private fun repairedCopyName(fileName: String): String = "${OriginalCopy.stem(fileName.ifBlank { "document" })} (repaired).pdf"
+
+/** The name the save picker suggests for a compacted copy of [fileName]. */
+private fun compactedCopyName(fileName: String): String = "${OriginalCopy.stem(fileName.ifBlank { "document" })} (compacted).pdf"
+
+/** The warning before the first edit of an open PDF: edits change the file, so a copy comes first. */
+@Composable
+private fun FirstEditDialog(warning: EditWarning, onCopyFirst: () -> Unit, onWithoutCopy: () -> Unit, onCancel: () -> Unit) {
+    val colors = KernTheme.colors
+    AlertDialog(
+        onDismissRequest = onCancel,
+        containerColor = colors.surface,
+        title = { Text("Editing changes this file") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(
+                    "Kern writes your edits into this PDF. Some apps may show it differently afterwards, " +
+                        "and a damaged or unusual PDF could be changed in ways you do not expect. " +
+                        "Save an untouched copy next to it first?",
+                )
+                if (warning.destination is CopyDestination.Picker) {
+                    Text("Kern cannot save next to this file, so you choose where the copy goes.", color = colors.textDim)
+                }
+                warning.problem?.let { Text(it, color = colors.danger) }
+            }
+        },
+        confirmButton = {
+            Column(horizontalAlignment = Alignment.End) {
+                TextButton(onClick = onCopyFirst) { Text("Save a copy first", color = colors.accent) }
+                TextButton(onClick = onWithoutCopy) { Text("Edit without a copy", color = colors.accent) }
+                TextButton(onClick = onCancel) { Text("Cancel", color = colors.textDim) }
+            }
+        },
+    )
 }
 
 @Composable
@@ -167,6 +326,8 @@ private fun PdfPager(
     val listState = rememberLazyListState()
     var containerWidthPx by remember { mutableIntStateOf(0) }
     var goToOpen by remember { mutableStateOf(false) }
+    val annotating = vm.annotateMode != PdfEditorViewModel.AnnotateMode.None
+    val selecting = vm.selectedAnnotation != null && !annotating
 
     // An internal link was tapped: show the page it points at.
     LaunchedEffect(vm.linkTargetPage) {
@@ -186,7 +347,10 @@ private fun PdfPager(
     }
 
     Box(
+        // The screen is edge to edge, so the keyboard covers what is not lifted above it: the page area
+        // shrinks to what is left, which keeps the field being typed in and the bar in view.
         modifier
+            .imePadding()
             .background(colors.sunken)
             .onSizeChanged { containerWidthPx = it.width }
             .pinchZoom(zoom),
@@ -206,11 +370,12 @@ private fun PdfPager(
                 }
             }
 
-            // Page indicator pill: which page sits at the top of the viewport. Tap to go to a page.
-            Box(
+            // Page indicator pill: which page sits at the top of the viewport. Tap to go to a page. It steps
+            // aside while a text field is open, whose chips would be under it.
+            if (!vm.textFieldOpen) Box(
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
-                    .padding(12.dp)
+                    .padding(start = 12.dp, end = 12.dp, top = 12.dp, bottom = if (annotating || selecting) ANNOTATE_BAR_CLEARANCE else 12.dp)
                     .clip(RoundedCornerShape(KernRadius.field))
                     .background(colors.surface)
                     .clickable(onClickLabel = "Go to page") { goToOpen = true }
@@ -237,10 +402,15 @@ private fun PdfPager(
             }
         }
 
+        if (annotating) AnnotateBar(vm, Modifier.align(Alignment.BottomCenter))
+        if (selecting) SelectionBar(vm, Modifier.align(Alignment.BottomCenter))
+
         PdfToolsLayer(vm, toolsSheetOpen, onToolsSheetOpenChange)
     }
 
     vm.pendingLink?.let { link -> OpenLinkDialog(link, onDismiss = vm::dismissLink) }
+
+    vm.noteRequest?.let { request -> NoteDialog(request, onCancel = vm::cancelNoteText, onConfirm = vm::commitNoteText) }
 
     if (goToOpen) {
         GoToPageDialog(
@@ -257,7 +427,7 @@ private fun PdfPager(
 }
 
 /**
- * Overlay for the PDF edit tools (merge / extract) backed by the Qyra native bridge.
+ * Overlay for the PDF edit tools (merge / extract) backed by the kernkraft native engine.
  * A tool produces a file in the app cache; this layer then prompts the user for a
  * SAF destination to save it out. Lives inside the pager [Box] so it can align its
  * snackbar and busy indicator. The tools sheet open-state is hoisted to the screen
@@ -272,6 +442,7 @@ private fun BoxScope.PdfToolsLayer(
     val colors = KernTheme.colors
     val snackbar = remember { SnackbarHostState() }
     var extractOpen by remember { mutableStateOf(false) }
+    var organiseOpen by remember { mutableStateOf(false) }
 
     // Save a produced file to a user-chosen SAF location.
     val saveLauncher = rememberLauncherForActivityResult(
@@ -310,7 +481,7 @@ private fun BoxScope.PdfToolsLayer(
         KernBottomSheet(onDismiss = { onSheetOpenChange(false) }, title = "PDF tools") {
             if (!vm.engineAvailable) {
                 Text(
-                    "Native engine (libkern_pdf.so) is not bundled in this build.",
+                    "Native engine (libkernkraft_jni.so) is not bundled in this build.",
                     style = KernType.caption,
                     color = colors.danger,
                     modifier = Modifier.padding(horizontal = 22.dp, vertical = 4.dp),
@@ -326,6 +497,15 @@ private fun BoxScope.PdfToolsLayer(
                 },
             )
             SheetActionRow(
+                icon = KernIcons.Grid,
+                label = "Organise pages",
+                sublabel = "Reorder, rotate or delete pages",
+                onClick = {
+                    onSheetOpenChange(false)
+                    organiseOpen = true
+                },
+            )
+            SheetActionRow(
                 icon = KernIcons.Split,
                 label = "Extract pages",
                 sublabel = "Save a page range as a new PDF",
@@ -336,6 +516,8 @@ private fun BoxScope.PdfToolsLayer(
             )
         }
     }
+
+    if (organiseOpen) OrganisePagesSheet(vm, onDismiss = { organiseOpen = false })
 
     if (extractOpen) {
         ExtractPagesDialog(
@@ -458,7 +640,7 @@ private fun PdfTextOverlay(lines: List<PdfTextLine>, modifier: Modifier = Modifi
                 Box(Modifier.fillMaxSize()) {
                     for (line in lines) {
                         if (line.rect.right > line.rect.left && line.rect.bottom > line.rect.top) {
-                            key(line) { OverlayLine(line, pageWidth, pageHeight, measurer) }
+                            key(line.text, line.rect) { OverlayLine(line, pageWidth, pageHeight, measurer) }
                         }
                     }
                 }
@@ -498,12 +680,15 @@ private const val SELECTION_ALPHA = 0.35f
 @Composable
 private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zoom: Float) {
     val colors = KernTheme.colors
+    val version = vm.pageVersion(index)
     var bitmap by remember(index, baseWidthPx) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(index, baseWidthPx) {
+    LaunchedEffect(index, baseWidthPx, version, vm.documentEpoch) {
         bitmap = vm.renderPage(index, baseWidthPx)?.asImageBitmap()
+        vm.pictureShown(index, version)
     }
 
     val widthDp = with(LocalDensity.current) { (baseWidthPx * zoom).toDp() }
+    val reach = touchReachPx()
     val bmp = bitmap
     if (bmp != null) {
         Box(
@@ -513,12 +698,21 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
             val matches = vm.pdfMatches.filter { it.page == index }
             val current = vm.currentMatch
             var lines by remember(index) { mutableStateOf<List<PdfTextLine>>(emptyList()) }
-            LaunchedEffect(index) { lines = vm.pageLines(index) }
+            // The text of the page is read only where a mode uses it, and after the page's picture is up.
+            val usesLines = vm.annotateMode == PdfEditorViewModel.AnnotateMode.None || vm.annotateMode == PdfEditorViewModel.AnnotateMode.Markup
+            val shown = vm.isShown(index, version)
+            LaunchedEffect(index, version, vm.documentEpoch, usesLines, shown) { if (usesLines && shown) lines = vm.pageLines(index) }
             Box(
                 Modifier
                     .width(widthDp)
-                    .pointerInput(index) {
-                        detectTapGestures { vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height)) }
+                    .then(if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.None) Modifier.carryAnnotation(vm, index, reach) else Modifier)
+                    .pointerInput(index, vm.annotateMode) {
+                        // Marking and drawing take the touches themselves; a tap on a link is for reading.
+                        if (vm.annotateMode == PdfEditorViewModel.AnnotateMode.None) {
+                            detectTapGestures {
+                                vm.tapPage(index, PagePoint(it.x / size.width, it.y / size.height), size.height.toFloat() / size.width, reach / size.width)
+                            }
+                        }
                     },
             ) {
             Image(
@@ -532,7 +726,17 @@ private fun PdfPageView(vm: PdfEditorViewModel, index: Int, baseWidthPx: Int, zo
                     .clip(RoundedCornerShape(KernRadius.pdfPage))
                     .border(1.dp, colors.borderSoft, RoundedCornerShape(KernRadius.pdfPage)),
             )
-            PdfTextOverlay(lines, Modifier.matchParentSize())
+            HeldMarks(vm, index, Modifier.matchParentSize())
+            when (vm.annotateMode) {
+                PdfEditorViewModel.AnnotateMode.None -> {
+                    PdfTextOverlay(lines, Modifier.matchParentSize())
+                    SelectionOutline(vm, index, Modifier.matchParentSize())
+                }
+                PdfEditorViewModel.AnnotateMode.Note -> NoteTapLayer(vm, index, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Text -> TextBlocksLayer(vm, index, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Markup -> MarkupLayer(vm, index, lines, Modifier.matchParentSize())
+                PdfEditorViewModel.AnnotateMode.Ink -> InkLayer(vm, index, Modifier.matchParentSize())
+            }
             }
         }
     } else {

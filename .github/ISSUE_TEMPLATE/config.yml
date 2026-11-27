@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
   - name: Security vulnerability
-    url: https://github.com/verycareful/kern/security/advisories/new
+    url: https://github.com/verycareful/kern-android/security/advisories/new
     about: Report privately. Do not open a public issue.
   - name: Contributing guidelines
-    url: https://github.com/verycareful/kern/blob/main/CONTRIBUTING.md
+    url: https://github.com/verycareful/kern-android/blob/main/CONTRIBUTING.md
     about: How to report problems and send changes.

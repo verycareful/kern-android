@@ -56,6 +56,8 @@ import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.MoreVert
 import androidx.compose.material.icons.outlined.OpenWith
 import androidx.compose.material.icons.outlined.PushPin
+import androidx.compose.material.icons.outlined.RotateLeft
+import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material.icons.outlined.Search
@@ -64,6 +66,7 @@ import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.Slideshow
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.StickyNote2
 import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.TextFields
 import androidx.compose.material.icons.outlined.Title
@@ -133,6 +136,7 @@ object KernIcons {
     val Slides = Icons.Outlined.Slideshow
     val Pen = Icons.Outlined.Edit
     val Highlight = Icons.Outlined.BorderColor
+    val Note = Icons.Outlined.StickyNote2
     val Merge = Icons.Outlined.CallMerge
     val Split = Icons.Outlined.CallSplit
     val Close = Icons.Outlined.Close
@@ -148,6 +152,8 @@ object KernIcons {
     val AlignMiddle = Icons.Outlined.VerticalAlignCenter
     val AlignBottom = Icons.Outlined.VerticalAlignBottom
     val Trash = Icons.Outlined.Delete
+    val RotateLeft = Icons.Outlined.RotateLeft
+    val RotateRight = Icons.Outlined.RotateRight
     val Download = Icons.Outlined.Download
     val Info = Icons.Outlined.Info
     val Link = Icons.Outlined.Link
